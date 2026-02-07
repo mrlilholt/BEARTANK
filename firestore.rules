@@ -1,0 +1,167 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function role() {
+      return userDoc().data.role;
+    }
+
+    function status() {
+      return userDoc().data.status;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && role() == 'super_admin';
+    }
+
+    function isTeacher() {
+      return isSignedIn() && (role() == 'teacher' || role() == 'super_admin') && status() == 'active';
+    }
+
+    function isStudent() {
+      return isSignedIn() && role() == 'student' && status() == 'active';
+    }
+
+    function isTeamMember(teamId) {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/teams/$(teamId)).data.memberIds.hasAny([request.auth.uid]);
+    }
+
+    match /users/{userId} {
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow read: if isSignedIn() && (request.auth.uid == userId || isTeacher() || isSuperAdmin());
+      allow update: if isSignedIn() && (request.auth.uid == userId || isTeacher() || isSuperAdmin());
+      allow delete: if isSuperAdmin();
+    }
+
+    match /teamRequests/{requestId} {
+      allow create: if isStudent() && request.resource.data.requestedBy == request.auth.uid;
+      allow read: if isTeacher() || request.auth.uid == resource.data.requestedBy;
+      allow update: if isTeacher();
+      allow delete: if isTeacher();
+    }
+
+    match /teams/{teamId} {
+      allow read: if isTeacher() || isTeamMember(teamId);
+      allow create: if isTeacher() || (
+        isStudent() &&
+        request.resource.data.memberIds.size() == 1 &&
+        request.resource.data.memberIds.hasOnly([request.auth.uid])
+      );
+      allow update: if isTeacher();
+      allow delete: if isTeacher();
+    }
+
+    match /teamProfiles/{teamId} {
+      allow read: if isTeacher() || isTeamMember(teamId);
+      allow create, update: if isTeacher() || isTeamMember(teamId);
+      allow delete: if isTeacher();
+    }
+
+    match /teamStages/{teamStageId} {
+      allow read: if isTeacher() || isTeamMember(resource.data.teamId);
+      allow create: if isTeacher() || (
+        isStudent() &&
+        request.resource.data.teamId != null &&
+        isTeamMember(request.resource.data.teamId)
+      );
+      allow update, delete: if isTeacher();
+    }
+
+    match /stages/{stageId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /submissions/{submissionId} {
+      allow read: if isTeacher() ||
+        (resource.data.userId != null && resource.data.userId == request.auth.uid) ||
+        (resource.data.teamId != null && isTeamMember(resource.data.teamId));
+
+      allow create: if isStudent() && (
+        (request.resource.data.userId == request.auth.uid &&
+          (request.resource.data.teamId == null || isTeamMember(request.resource.data.teamId))) ||
+        (request.resource.data.userId == null &&
+          request.resource.data.teamId != null &&
+          isTeamMember(request.resource.data.teamId))
+      );
+
+      allow update: if isTeacher() || (
+        isStudent() &&
+        (
+          (resource.data.userId != null && resource.data.userId == request.auth.uid) ||
+          (resource.data.userId == null && resource.data.teamId != null && isTeamMember(resource.data.teamId))
+        ) &&
+        resource.data.status in ['draft', 'needs_changes']
+      );
+
+      allow delete: if isTeacher();
+    }
+
+    match /pointsLedger/{entryId} {
+      allow read: if isTeacher() ||
+        (resource.data.entityType == 'user' && resource.data.entityId == request.auth.uid) ||
+        (resource.data.entityType == 'team' && isTeamMember(resource.data.entityId));
+
+      allow create: if isTeacher();
+      allow update, delete: if false;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isTeacher() || resource.data.userId == request.auth.uid;
+      allow create: if isTeacher();
+      allow update: if isTeacher() || resource.data.userId == request.auth.uid;
+      allow delete: if isTeacher();
+    }
+
+    match /announcements/{announcementId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /helpTickets/{ticketId} {
+      allow create: if isStudent() && request.resource.data.createdBy == request.auth.uid;
+      allow read: if isTeacher() || resource.data.createdBy == request.auth.uid;
+      allow update: if isTeacher() || resource.data.createdBy == request.auth.uid;
+      allow delete: if isTeacher();
+    }
+
+    match /pitchDecks/{deckId} {
+      allow read: if isTeacher() || isTeamMember(resource.data.teamId);
+      allow create, update: if isTeacher() || isTeamMember(request.resource.data.teamId);
+      allow delete: if isTeacher();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isTeacher();
+      allow create: if isTeacher();
+      allow update, delete: if false;
+    }
+
+    match /cohorts/{cohortId} {
+      allow read: if isTeacher();
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /class/{classId} {
+      allow read: if isTeacher();
+      allow create, update, delete: if isTeacher();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

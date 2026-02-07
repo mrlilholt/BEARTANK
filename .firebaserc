@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "staging": "beartank-f7c2d",
+    "BEARTANK": "beartank-f7c2d"
+  },
+  "targets": {},
+  "etags": {}
+}
