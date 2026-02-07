@@ -22,6 +22,7 @@ import BusinessRoundedIcon from '@mui/icons-material/BusinessRounded';
 import NotificationsRoundedIcon from '@mui/icons-material/NotificationsRounded';
 import SlideshowRoundedIcon from '@mui/icons-material/SlideshowRounded';
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
+import MenuBookRoundedIcon from '@mui/icons-material/MenuBookRounded';
 import { DASHBOARD_BY_ROLE, ROLE_LABELS, useAuth } from '../lib/auth-context.jsx';
 import LogoMark from './LogoMark.jsx';
 import { collection, query, where } from 'firebase/firestore';
@@ -34,6 +35,7 @@ const teacherNav = [
   { label: 'Approvals', to: '/teacher/approvals', icon: TaskAltRoundedIcon, badge: 'approvals' },
   { label: 'Teams', to: '/teacher/teams', icon: GroupsRoundedIcon },
   { label: 'Analytics', to: '/teacher/analytics', icon: InsightsRoundedIcon },
+  { label: 'Resources', to: '/teacher/resources', icon: MenuBookRoundedIcon },
   { label: 'Announcements', to: '/teacher/announcements', icon: CampaignRoundedIcon },
   { label: 'Side Hustles', to: '/teacher/side-hustles', icon: BoltRoundedIcon },
   { label: 'Help Desk', to: '/teacher/helpdesk', icon: HelpRoundedIcon }
@@ -49,6 +51,7 @@ const navByRole = {
       icon: NotificationsRoundedIcon,
       badge: 'notifications'
     },
+    { label: 'Resources', to: '/student/resources', icon: MenuBookRoundedIcon },
     { label: 'Announcements', to: '/student/announcements', icon: CampaignRoundedIcon },
     { label: 'Pitch Deck', to: '/student/pitch-deck', icon: SlideshowRoundedIcon },
     { label: 'Help Desk', to: '/student/help', icon: HelpRoundedIcon }

@@ -20,6 +20,7 @@ import Analytics from './pages/Analytics.jsx';
 import Teams from './pages/Teams.jsx';
 import SideHustles from './pages/SideHustles.jsx';
 import PitchDeck from './pages/PitchDeck.jsx';
+import Resources from './pages/Resources.jsx';
 import NotFound from './pages/NotFound.jsx';
 
 export default function App() {
@@ -95,6 +96,14 @@ export default function App() {
             </RequireRole>
           }
         />
+        <Route
+          path="/student/resources"
+          element={
+            <RequireRole allow={['student']}>
+              <Resources />
+            </RequireRole>
+          }
+        />
 
         <Route
           path="/teacher"
@@ -149,6 +158,14 @@ export default function App() {
           element={
             <RequireRole allow={['teacher', 'super_admin']}>
               <SideHustles />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/teacher/resources"
+          element={
+            <RequireRole allow={['teacher', 'super_admin']}>
+              <Resources />
             </RequireRole>
           }
         />

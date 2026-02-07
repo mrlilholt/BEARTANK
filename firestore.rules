@@ -131,6 +131,11 @@ service cloud.firestore {
       allow create, update, delete: if isTeacher();
     }
 
+    match /resources/{resourceId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isTeacher();
+    }
+
     match /helpTickets/{ticketId} {
       allow create: if isStudent() && request.resource.data.createdBy == request.auth.uid;
       allow read: if isTeacher() || resource.data.createdBy == request.auth.uid;
