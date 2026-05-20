@@ -11,8 +11,11 @@ import AssignmentTurnedInRoundedIcon from '@mui/icons-material/AssignmentTurnedI
 import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded';
 import CampaignRoundedIcon from '@mui/icons-material/CampaignRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
+import PaidRoundedIcon from '@mui/icons-material/PaidRounded';
 import { Link as RouterLink } from 'react-router-dom';
+import { useState } from 'react';
 import AppShell from '../components/AppShell.jsx';
+import BonusAwardDialog from '../components/BonusAwardDialog.jsx';
 import { collection, query, where } from 'firebase/firestore';
 import { useMemo } from 'react';
 import { useCollection } from '../lib/firestore-hooks.js';
@@ -51,6 +54,7 @@ function ProgressRing({ value = 0 }) {
 
 export default function TeacherDashboard() {
   const { user, profile } = useAuth();
+  const [bonusDialogOpen, setBonusDialogOpen] = useState(false);
   const pendingSubmissionsQuery = useMemo(
     () => query(collection(db, 'submissions'), where('status', '==', 'submitted')),
     []
@@ -127,6 +131,12 @@ export default function TeacherDashboard() {
       helper: nextSideHustle?.title ? 'Next scheduled' : 'Schedule one',
       icon: BoltRoundedIcon,
       to: '/teacher/side-hustles'
+    },
+    {
+      label: 'Bonus BB',
+      helper: 'Award now',
+      icon: PaidRoundedIcon,
+      onClick: () => setBonusDialogOpen(true)
     }
   ];
 
@@ -159,16 +169,47 @@ export default function TeacherDashboard() {
     });
   }
 
-  const weeklyTotals = new Array(7).fill(0);
-  pointsLedger.forEach((entry) => {
-    const date = entry.createdAt?.toDate?.();
-    if (!date || date < weekStart) return;
-    const diff = Math.floor((date - weekStart) / (24 * 60 * 60 * 1000));
-    if (diff >= 0 && diff < 7) weeklyTotals[diff] += entry.amount || 0;
-  });
-  const weeklyMax = Math.max(...weeklyTotals, 1);
-  const weeklySeries = weeklyTotals.map((value) => Math.round((value / weeklyMax) * 100));
-  const totalIssued = weeklyTotals.reduce((sum, value) => sum + value, 0);
+  const weeklyChart = useMemo(() => {
+    const dayBuckets = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(weekStart);
+      date.setDate(weekStart.getDate() + index);
+      date.setHours(0, 0, 0, 0);
+      const nextDate = new Date(date);
+      nextDate.setDate(date.getDate() + 1);
+      return {
+        key: date.toISOString().slice(0, 10),
+        date,
+        nextDate,
+        label: date.toLocaleDateString([], { weekday: 'narrow' }),
+        shortLabel: date.toLocaleDateString([], { weekday: 'short' }),
+        amount: 0
+      };
+    });
+
+    pointsLedger.forEach((entry) => {
+      const entryDate = entry.createdAt?.toDate?.();
+      if (!entryDate) return;
+      const bucket = dayBuckets.find((item) => entryDate >= item.date && entryDate < item.nextDate);
+      if (!bucket) return;
+      bucket.amount += entry.amount || 0;
+    });
+
+    const weeklyMax = Math.max(...dayBuckets.map((item) => item.amount), 1);
+    const series = dayBuckets.map((item) => ({
+      ...item,
+      height: item.amount > 0 ? Math.max(Math.round((item.amount / weeklyMax) * 100), 12) : 0,
+      fullLabel: item.date.toLocaleDateString([], {
+        weekday: 'long',
+        month: 'short',
+        day: 'numeric'
+      })
+    }));
+
+    return {
+      series,
+      totalIssued: series.reduce((sum, item) => sum + item.amount, 0)
+    };
+  }, [pointsLedger, weekStart]);
 
   const greeting = useMemo(() => {
     const hour = new Date().getHours();
@@ -239,14 +280,26 @@ export default function TeacherDashboard() {
           <Paper sx={{ p: 3, mt: 3 }}>
             <Stack spacing={2}>
               <Typography variant="h6">Key control panels</Typography>
-              <Grid container spacing={2}>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gap: 2,
+                  gridTemplateColumns: {
+                    xs: 'repeat(2, minmax(0, 1fr))',
+                    sm: 'repeat(3, minmax(0, 1fr))',
+                    lg: 'repeat(5, minmax(0, 1fr))'
+                  }
+                }}
+              >
                 {categories.map((item) => {
                   const Icon = item.icon;
                   return (
-                    <Grid item xs={6} sm={3} key={item.label}>
-                      <ButtonBase
-                        component={RouterLink}
+                    <ButtonBase
+                        key={item.label}
+                        component={item.to ? RouterLink : 'button'}
                         to={item.to}
+                        onClick={item.onClick}
+                        type="button"
                         sx={{
                           width: '100%',
                           height: 96,
@@ -296,10 +349,9 @@ export default function TeacherDashboard() {
                           {item.label}
                         </Box>
                       </ButtonBase>
-                    </Grid>
                   );
                 })}
-              </Grid>
+              </Box>
             </Stack>
           </Paper>
 
@@ -373,7 +425,7 @@ export default function TeacherDashboard() {
               <Stack spacing={2}>
                 <Typography variant="h6">Bear Bucks issued</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {totalIssued.toLocaleString()} this week
+                  {weeklyChart.totalIssued.toLocaleString()} in the last 7 days
                 </Typography>
                 <Box
                   sx={{
@@ -384,21 +436,59 @@ export default function TeacherDashboard() {
                     height: 120
                   }}
                 >
-                  {weeklySeries.map((value, index) => (
+                  {weeklyChart.series.map((item) => (
                     <Box
-                      key={`bar-${index}`}
+                      key={item.key}
                       sx={{
-                        height: `${value}%`,
-                        borderRadius: 999,
-                        background: 'linear-gradient(180deg, #6c63ff 0%, #9a94ff 100%)'
+                        position: 'relative',
+                        height: '100%',
+                        display: 'grid',
+                        alignItems: 'end',
+                        '&:hover .weekly-bar-label': {
+                          opacity: 1,
+                          transform: 'translate(-50%, -140%)'
+                        }
                       }}
-                    />
+                    >
+                      <Box
+                        className="weekly-bar-label"
+                        sx={{
+                          position: 'absolute',
+                          top: 0,
+                          left: '50%',
+                          transform: 'translate(-50%, -160%)',
+                          bgcolor: 'rgba(31, 37, 82, 0.92)',
+                          color: '#fff',
+                          px: 1.5,
+                          py: 0.5,
+                          borderRadius: 999,
+                          fontSize: 12,
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                          opacity: 0,
+                          transition: 'all 0.2s ease',
+                          zIndex: 2
+                        }}
+                      >
+                        {item.shortLabel}: {item.amount.toLocaleString()} BB
+                      </Box>
+                      <Box
+                        sx={{
+                          height: `${item.height}%`,
+                          minHeight: item.amount > 0 ? 18 : 0,
+                          borderRadius: 999,
+                          background: 'linear-gradient(180deg, #6c63ff 0%, #9a94ff 100%)'
+                        }}
+                        aria-label={`${item.fullLabel}: ${item.amount.toLocaleString()} Bear Bucks`}
+                        title={`${item.fullLabel}: ${item.amount.toLocaleString()} Bear Bucks`}
+                      />
+                    </Box>
                   ))}
                 </Box>
                 <Stack direction="row" justifyContent="space-between">
-                  {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day) => (
-                    <Typography key={day} variant="caption" color="text.secondary">
-                      {day}
+                  {weeklyChart.series.map((item) => (
+                    <Typography key={item.key} variant="caption" color="text.secondary">
+                      {item.label}
                     </Typography>
                   ))}
                 </Stack>
@@ -407,6 +497,7 @@ export default function TeacherDashboard() {
           </Stack>
         </Grid>
       </Grid>
+      <BonusAwardDialog open={bonusDialogOpen} onClose={() => setBonusDialogOpen(false)} />
     </AppShell>
   );
 }

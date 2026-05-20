@@ -57,6 +57,8 @@ export default function Teams() {
 
   const submissionsQuery = useMemo(() => query(collection(db, 'submissions')), []);
   const { data: submissions } = useCollection(submissionsQuery);
+  const pointsLedgerQuery = useMemo(() => query(collection(db, 'pointsLedger')), []);
+  const { data: pointsLedger } = useCollection(pointsLedgerQuery);
 
   const brandKitQuery = useMemo(
     () => query(collection(db, 'submissions'), where('taskType', '==', 'brand_kit')),
@@ -278,10 +280,28 @@ export default function Teams() {
         }
       });
 
+      pointsLedger.forEach((entry) => {
+        if (entry.reason !== 'manual-bonus') return;
+
+        if (entry.entityType === 'user' && memberStats.has(entry.entityId)) {
+          const stats = memberStats.get(entry.entityId);
+          stats.points += entry.amount || 0;
+        }
+      });
+
       map.set(team.id, memberStats);
     });
     return map;
-  }, [teams, submissions]);
+  }, [teams, submissions, pointsLedger]);
+
+  const teamBonusMap = useMemo(() => {
+    const map = new Map();
+    pointsLedger.forEach((entry) => {
+      if (entry.reason !== 'manual-bonus' || entry.entityType !== 'team' || !entry.entityId) return;
+      map.set(entry.entityId, (map.get(entry.entityId) || 0) + (entry.amount || 0));
+    });
+    return map;
+  }, [pointsLedger]);
 
   const brandKitByTeam = useMemo(() => {
     const map = new Map();
@@ -466,6 +486,7 @@ export default function Teams() {
           {teams.map((team) => {
             const memberIds = team.memberIds || [];
             const memberStats = teamContributionMap.get(team.id) || new Map();
+            const teamBonus = teamBonusMap.get(team.id) || 0;
             const stageList = teamStageMap.get(team.id) || [];
             const completedStages = stageList.filter((stage) => stage.status === 'complete').length;
             const totalStages = stageList.length || stages.length || 0;
@@ -516,6 +537,13 @@ export default function Teams() {
                       <Chip
                         label={`Active: ${stageTitleMap.get(activeStage.stageId) || 'Stage'}`}
                         color="secondary"
+                      />
+                    ) : null}
+                    {teamBonus > 0 ? (
+                      <Chip
+                        label={`Team bonus: ${teamBonus} BB`}
+                        color="secondary"
+                        variant="outlined"
                       />
                     ) : null}
                   </Stack>
