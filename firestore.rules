@@ -5,6 +5,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isSelf(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
     function userDoc() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid));
     }
@@ -17,8 +21,12 @@ service cloud.firestore {
       return userDoc().data.status;
     }
 
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).changedKeys();
+    }
+
     function isSuperAdmin() {
-      return isSignedIn() && role() == 'super_admin';
+      return isSignedIn() && role() == 'super_admin' && status() == 'active';
     }
 
     function isTeacher() {
@@ -34,15 +42,218 @@ service cloud.firestore {
         get(/databases/$(database)/documents/teams/$(teamId)).data.memberIds.hasAny([request.auth.uid]);
     }
 
+    function isAllowlistedSuperAdminEmail() {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        exists(/databases/$(database)/documents/settings/security) &&
+        get(/databases/$(database)/documents/settings/security).data.superAdminEmails is list &&
+        get(/databases/$(database)/documents/settings/security).data.superAdminEmails.hasAny([request.auth.token.email]);
+    }
+
+    function canCreateOwnUserDoc(userId) {
+      return isSelf(userId) &&
+        request.resource.data.email == request.auth.token.email &&
+        (
+          (request.resource.data.role == 'student' && request.resource.data.status == 'active') ||
+          (request.resource.data.role == 'teacher' && request.resource.data.status == 'pending') ||
+          (
+            request.resource.data.role == 'super_admin' &&
+            request.resource.data.status == 'active' &&
+            isAllowlistedSuperAdminEmail()
+          )
+        );
+    }
+
+    function userCoreFieldsUnchanged() {
+      return request.resource.data.role == resource.data.role &&
+        request.resource.data.status == resource.data.status &&
+        request.resource.data.approvedBy == resource.data.approvedBy &&
+        request.resource.data.createdAt == resource.data.createdAt;
+    }
+
+    function canSelfUpdateOwnProfile(userId) {
+      return isSelf(userId) &&
+        userCoreFieldsUnchanged() &&
+        request.resource.data.email == request.auth.token.email &&
+        changedKeys().hasOnly([
+          'profile',
+          'classCode',
+          'photoURL',
+          'email',
+          'updatedAt'
+        ]);
+    }
+
+    function canSelfClaimSoloTeam(userId) {
+      return isSelf(userId) &&
+        userCoreFieldsUnchanged() &&
+        changedKeys().hasOnly([
+          'teamId',
+          'companyName',
+          'teamName',
+          'updatedAt'
+        ]) &&
+        resource.data.teamId == null &&
+        request.resource.data.teamId != null &&
+        exists(/databases/$(database)/documents/teams/$(request.resource.data.teamId)) &&
+        get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.createdBy == request.auth.uid &&
+        get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.memberIds.hasOnly([request.auth.uid]) &&
+        request.resource.data.companyName == get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.companyName &&
+        request.resource.data.teamName == get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.teamName;
+    }
+
+    function canTeacherAssignUserTeam() {
+      return isTeacher() &&
+        userCoreFieldsUnchanged() &&
+        request.resource.data.email == resource.data.email &&
+        changedKeys().hasOnly([
+          'teamId',
+          'companyName',
+          'teamName',
+          'updatedAt'
+        ]);
+    }
+
+    function canSuperAdminApproveTeacher() {
+      return isSuperAdmin() &&
+        resource.data.role == 'teacher' &&
+        request.resource.data.role == 'teacher' &&
+        resource.data.status == 'pending' &&
+        request.resource.data.status == 'active' &&
+        request.resource.data.approvedBy == request.auth.uid &&
+        changedKeys().hasOnly([
+          'status',
+          'approvedBy',
+          'updatedAt'
+        ]);
+    }
+
+    function canReadSubmission() {
+      return isTeacher() ||
+        (resource.data.userId != null && resource.data.userId == request.auth.uid) ||
+        (resource.data.teamId != null && isTeamMember(resource.data.teamId));
+    }
+
+    function canStudentCreateSubmission() {
+      return isStudent() &&
+        request.resource.data.keys().hasOnly([
+          'taskId',
+          'taskTitle',
+          'taskPoints',
+          'taskType',
+          'stageId',
+          'teamId',
+          'userId',
+          'submittedBy',
+          'status',
+          'content',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        request.resource.data.submittedBy == request.auth.uid &&
+        request.resource.data.status in ['draft', 'submitted'] &&
+        (
+          (
+            request.resource.data.userId == request.auth.uid &&
+            (request.resource.data.teamId == null || isTeamMember(request.resource.data.teamId))
+          ) ||
+          (
+            request.resource.data.userId == null &&
+            request.resource.data.teamId != null &&
+            isTeamMember(request.resource.data.teamId)
+          )
+        );
+    }
+
+    function studentOwnsSubmission() {
+      return (resource.data.userId != null && resource.data.userId == request.auth.uid) ||
+        (resource.data.userId == null && resource.data.teamId != null && isTeamMember(resource.data.teamId));
+    }
+
+    function canStudentResubmitSubmission() {
+      return isStudent() &&
+        studentOwnsSubmission() &&
+        resource.data.status in ['draft', 'needs_changes'] &&
+        request.resource.data.status in ['draft', 'submitted'] &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.teamId == resource.data.teamId &&
+        request.resource.data.taskId == resource.data.taskId &&
+        request.resource.data.taskTitle == resource.data.taskTitle &&
+        request.resource.data.taskPoints == resource.data.taskPoints &&
+        request.resource.data.taskType == resource.data.taskType &&
+        request.resource.data.stageId == resource.data.stageId &&
+        request.resource.data.submittedBy == resource.data.submittedBy &&
+        request.resource.data.submittedBy == request.auth.uid &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.feedback == resource.data.feedback &&
+        request.resource.data.reviewedBy == resource.data.reviewedBy &&
+        request.resource.data.reviewedAt == resource.data.reviewedAt &&
+        request.resource.data.pointsAwarded == resource.data.pointsAwarded &&
+        request.resource.data.bonusPoints == resource.data.bonusPoints &&
+        request.resource.data.pointsIssued == resource.data.pointsIssued &&
+        changedKeys().hasOnly([
+          'status',
+          'content',
+          'updatedAt'
+        ]);
+    }
+
+    function canStudentMarkNotificationRead() {
+      return resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId &&
+        request.resource.data.title == resource.data.title &&
+        request.resource.data.message == resource.data.message &&
+        request.resource.data.link == resource.data.link &&
+        request.resource.data.type == resource.data.type &&
+        request.resource.data.sourceId == resource.data.sourceId &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.read is bool &&
+        changedKeys().hasOnly([
+          'read',
+          'readAt'
+        ]);
+    }
+
+    function canStudentReplyHelpTicket() {
+      return resource.data.createdBy == request.auth.uid &&
+        request.resource.data.createdBy == resource.data.createdBy &&
+        request.resource.data.stage == resource.data.stage &&
+        request.resource.data.task == resource.data.task &&
+        request.resource.data.status == resource.data.status &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        changedKeys().hasOnly([
+          'messages',
+          'updatedAt'
+        ]);
+    }
+
+    function canCreateTeamRequest() {
+      return isStudent() &&
+        request.resource.data.requestedBy == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.keys().hasOnly([
+          'companyName',
+          'teamName',
+          'memberEmails',
+          'requestedBy',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ]);
+    }
+
     match /users/{userId} {
-      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow create: if canCreateOwnUserDoc(userId);
       allow read: if isSignedIn() && (request.auth.uid == userId || isTeacher() || isSuperAdmin());
-      allow update: if isSignedIn() && (request.auth.uid == userId || isTeacher() || isSuperAdmin());
+      allow update: if canSelfUpdateOwnProfile(userId) ||
+        canSelfClaimSoloTeam(userId) ||
+        canTeacherAssignUserTeam() ||
+        canSuperAdminApproveTeacher();
       allow delete: if isSuperAdmin();
     }
 
     match /teamRequests/{requestId} {
-      allow create: if isStudent() && request.resource.data.requestedBy == request.auth.uid;
+      allow create: if canCreateTeamRequest();
       allow read: if isTeacher() || request.auth.uid == resource.data.requestedBy;
       allow update: if isTeacher();
       allow delete: if isTeacher();
@@ -61,7 +272,7 @@ service cloud.firestore {
 
     match /teamProfiles/{teamId} {
       allow read: if isTeacher() || isTeamMember(teamId);
-      allow create, update: if isTeacher() || isTeamMember(teamId);
+      allow create, update: if isTeacher();
       allow delete: if isTeacher();
     }
 
@@ -86,26 +297,9 @@ service cloud.firestore {
     }
 
     match /submissions/{submissionId} {
-      allow read: if isTeacher() ||
-        (resource.data.userId != null && resource.data.userId == request.auth.uid) ||
-        (resource.data.teamId != null && isTeamMember(resource.data.teamId));
-
-      allow create: if isStudent() && (
-        (request.resource.data.userId == request.auth.uid &&
-          (request.resource.data.teamId == null || isTeamMember(request.resource.data.teamId))) ||
-        (request.resource.data.userId == null &&
-          request.resource.data.teamId != null &&
-          isTeamMember(request.resource.data.teamId))
-      );
-
-      allow update: if isTeacher() || (
-        isStudent() &&
-        (
-          (resource.data.userId != null && resource.data.userId == request.auth.uid) ||
-          (resource.data.userId == null && resource.data.teamId != null && isTeamMember(resource.data.teamId))
-        ) &&
-        resource.data.status in ['draft', 'needs_changes']
-      );
+      allow read: if canReadSubmission();
+      allow create: if isTeacher() || canStudentCreateSubmission();
+      allow update: if isTeacher() || canStudentResubmitSubmission();
 
       allow delete: if isTeacher();
     }
@@ -122,7 +316,7 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read: if isTeacher() || resource.data.userId == request.auth.uid;
       allow create: if isTeacher();
-      allow update: if isTeacher() || resource.data.userId == request.auth.uid;
+      allow update: if isTeacher() || canStudentMarkNotificationRead();
       allow delete: if isTeacher();
     }
 
@@ -139,7 +333,7 @@ service cloud.firestore {
     match /helpTickets/{ticketId} {
       allow create: if isStudent() && request.resource.data.createdBy == request.auth.uid;
       allow read: if isTeacher() || resource.data.createdBy == request.auth.uid;
-      allow update: if isTeacher() || resource.data.createdBy == request.auth.uid;
+      allow update: if isTeacher() || canStudentReplyHelpTicket();
       allow delete: if isTeacher();
     }
 

@@ -11,8 +11,11 @@ import AssignmentTurnedInRoundedIcon from '@mui/icons-material/AssignmentTurnedI
 import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded';
 import CampaignRoundedIcon from '@mui/icons-material/CampaignRounded';
 import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
+import PaidRoundedIcon from '@mui/icons-material/PaidRounded';
 import { Link as RouterLink } from 'react-router-dom';
+import { useState } from 'react';
 import AppShell from '../components/AppShell.jsx';
+import BonusAwardDialog from '../components/BonusAwardDialog.jsx';
 import { collection, query, where } from 'firebase/firestore';
 import { useMemo } from 'react';
 import { useCollection } from '../lib/firestore-hooks.js';
@@ -51,6 +54,7 @@ function ProgressRing({ value = 0 }) {
 
 export default function TeacherDashboard() {
   const { user, profile } = useAuth();
+  const [bonusDialogOpen, setBonusDialogOpen] = useState(false);
   const pendingSubmissionsQuery = useMemo(
     () => query(collection(db, 'submissions'), where('status', '==', 'submitted')),
     []
@@ -127,6 +131,12 @@ export default function TeacherDashboard() {
       helper: nextSideHustle?.title ? 'Next scheduled' : 'Schedule one',
       icon: BoltRoundedIcon,
       to: '/teacher/side-hustles'
+    },
+    {
+      label: 'Bonus BB',
+      helper: 'Award now',
+      icon: PaidRoundedIcon,
+      onClick: () => setBonusDialogOpen(true)
     }
   ];
 
@@ -239,14 +249,26 @@ export default function TeacherDashboard() {
           <Paper sx={{ p: 3, mt: 3 }}>
             <Stack spacing={2}>
               <Typography variant="h6">Key control panels</Typography>
-              <Grid container spacing={2}>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gap: 2,
+                  gridTemplateColumns: {
+                    xs: 'repeat(2, minmax(0, 1fr))',
+                    sm: 'repeat(3, minmax(0, 1fr))',
+                    lg: 'repeat(5, minmax(0, 1fr))'
+                  }
+                }}
+              >
                 {categories.map((item) => {
                   const Icon = item.icon;
                   return (
-                    <Grid item xs={6} sm={3} key={item.label}>
-                      <ButtonBase
-                        component={RouterLink}
+                    <ButtonBase
+                        key={item.label}
+                        component={item.to ? RouterLink : 'button'}
                         to={item.to}
+                        onClick={item.onClick}
+                        type="button"
                         sx={{
                           width: '100%',
                           height: 96,
@@ -296,10 +318,9 @@ export default function TeacherDashboard() {
                           {item.label}
                         </Box>
                       </ButtonBase>
-                    </Grid>
                   );
                 })}
-              </Grid>
+              </Box>
             </Stack>
           </Paper>
 
@@ -407,6 +428,7 @@ export default function TeacherDashboard() {
           </Stack>
         </Grid>
       </Grid>
+      <BonusAwardDialog open={bonusDialogOpen} onClose={() => setBonusDialogOpen(false)} />
     </AppShell>
   );
 }

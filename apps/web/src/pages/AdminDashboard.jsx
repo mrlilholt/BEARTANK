@@ -1,13 +1,15 @@
 import { Button, Paper, Stack, Typography } from '@mui/material';
 import { collection, doc, query, updateDoc, where } from 'firebase/firestore';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import AppShell from '../components/AppShell.jsx';
+import BonusAwardDialog from '../components/BonusAwardDialog.jsx';
 import { useAuth } from '../lib/auth-context.jsx';
 import { useCollection } from '../lib/firestore-hooks.js';
 import { db } from '../lib/firebase.js';
 
 export default function AdminDashboard() {
   const { user } = useAuth();
+  const [bonusDialogOpen, setBonusDialogOpen] = useState(false);
   const teachersQuery = useMemo(
     () => query(collection(db, 'users'), where('role', '==', 'teacher')),
     []
@@ -28,6 +30,29 @@ export default function AdminDashboard() {
       title="Approve Teachers & Cohorts"
       subtitle="You control admin access and archive cohorts when the week is done."
     >
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={2}
+          alignItems={{ sm: 'center' }}
+          justifyContent="space-between"
+        >
+          <Stack spacing={0.5}>
+            <Typography variant="h6">Bonus Bear Bucks</Typography>
+            <Typography color="text.secondary">
+              Award one-off bonuses to students or teams at any time.
+            </Typography>
+          </Stack>
+          <Button
+            variant="contained"
+            color="secondary"
+            onClick={() => setBonusDialogOpen(true)}
+            sx={{ width: { xs: '100%', sm: 'auto' } }}
+          >
+            Open bonus panel
+          </Button>
+        </Stack>
+      </Paper>
       <Paper sx={{ p: 3 }}>
         <Stack spacing={2}>
           <Typography variant="h6">Teacher Requests</Typography>
@@ -59,6 +84,7 @@ export default function AdminDashboard() {
           ))}
         </Stack>
       </Paper>
+      <BonusAwardDialog open={bonusDialogOpen} onClose={() => setBonusDialogOpen(false)} />
     </AppShell>
   );
 }
