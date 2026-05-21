@@ -108,10 +108,10 @@ export default function AppShell({ title, subtitle, kicker, actions, children })
 
   const helpDeskQuery = useMemo(() => {
     if (!user || (role !== 'teacher' && role !== 'super_admin')) return null;
-    return query(collection(db, 'helpTickets'), where('awaitingRole', '==', 'teacher'));
+    return query(collection(db, 'helpTickets'));
   }, [user?.uid, role]);
   const { data: helpTickets } = useCollection(helpDeskQuery);
-  const helpDeskCount = helpTickets.length;
+  const helpDeskCount = helpTickets.filter((ticket) => ticket.status !== 'resolved').length;
 
   const studentHelpDeskQuery = useMemo(() => {
     if (!user || role !== 'student') return null;
