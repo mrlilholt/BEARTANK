@@ -272,7 +272,7 @@ service cloud.firestore {
 
     match /teamProfiles/{teamId} {
       allow read: if isTeacher() || isTeamMember(teamId);
-      allow create, update: if isTeacher();
+      allow create, update: if isTeacher() || isTeamMember(teamId);
       allow delete: if isTeacher();
     }
 

@@ -14,6 +14,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  Timestamp,
   updateDoc,
   where
 } from 'firebase/firestore';
@@ -46,38 +47,47 @@ export default function HelpDesk() {
       setError('Please add a message.');
       return;
     }
-    await addDoc(collection(db, 'helpTickets'), {
-      createdBy: user.uid,
-      stage: stage.trim(),
-      task: task.trim(),
-      status: 'open',
-      messages: [
-        {
-          body: message.trim(),
-          senderId: user.uid,
-          createdAt: serverTimestamp()
-        }
-      ],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    setStage('');
-    setTask('');
-    setMessage('');
+    try {
+      await addDoc(collection(db, 'helpTickets'), {
+        createdBy: user.uid,
+        stage: stage.trim(),
+        task: task.trim(),
+        status: 'open',
+        messages: [
+          {
+            body: message.trim(),
+            senderId: user.uid,
+            createdAt: Timestamp.now()
+          }
+        ],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      setStage('');
+      setTask('');
+      setMessage('');
+    } catch (err) {
+      setError(err.message || 'Could not send help request.');
+    }
   };
 
   const sendReply = async (ticketId) => {
+    setError('');
     const reply = replyById[ticketId];
     if (!reply || !reply.trim()) return;
-    await updateDoc(doc(db, 'helpTickets', ticketId), {
-      messages: arrayUnion({
-        body: reply.trim(),
-        senderId: user.uid,
-        createdAt: serverTimestamp()
-      }),
-      updatedAt: serverTimestamp()
-    });
-    setReplyById((prev) => ({ ...prev, [ticketId]: '' }));
+    try {
+      await updateDoc(doc(db, 'helpTickets', ticketId), {
+        messages: arrayUnion({
+          body: reply.trim(),
+          senderId: user.uid,
+          createdAt: Timestamp.now()
+        }),
+        updatedAt: serverTimestamp()
+      });
+      setReplyById((prev) => ({ ...prev, [ticketId]: '' }));
+    } catch (err) {
+      setError(err.message || 'Could not send reply.');
+    }
   };
 
   return (
