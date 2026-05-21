@@ -14,6 +14,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  Timestamp,
   updateDoc,
   where
 } from 'firebase/firestore';
@@ -46,38 +47,76 @@ export default function HelpDesk() {
       setError('Please add a message.');
       return;
     }
-    await addDoc(collection(db, 'helpTickets'), {
-      createdBy: user.uid,
-      stage: stage.trim(),
-      task: task.trim(),
-      status: 'open',
-      messages: [
-        {
-          body: message.trim(),
-          senderId: user.uid,
-          createdAt: serverTimestamp()
-        }
-      ],
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-    setStage('');
-    setTask('');
-    setMessage('');
+    try {
+      await addDoc(collection(db, 'helpTickets'), {
+        createdBy: user.uid,
+        stage: stage.trim(),
+        task: task.trim(),
+        status: 'open',
+        awaitingRole: 'teacher',
+        messages: [
+          {
+            body: message.trim(),
+            senderId: user.uid,
+            createdAt: Timestamp.now()
+          }
+        ],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+      setStage('');
+      setTask('');
+      setMessage('');
+    } catch (err) {
+      setError(err.message || 'Could not send help request.');
+    }
   };
 
-  const sendReply = async (ticketId) => {
-    const reply = replyById[ticketId];
+  const sendReply = async (ticket) => {
+    setError('');
+    const reply = replyById[ticket.id];
     if (!reply || !reply.trim()) return;
-    await updateDoc(doc(db, 'helpTickets', ticketId), {
-      messages: arrayUnion({
-        body: reply.trim(),
-        senderId: user.uid,
-        createdAt: serverTimestamp()
-      }),
-      updatedAt: serverTimestamp()
-    });
-    setReplyById((prev) => ({ ...prev, [ticketId]: '' }));
+    try {
+      await updateDoc(doc(db, 'helpTickets', ticket.id), {
+        messages: arrayUnion({
+          body: reply.trim(),
+          senderId: user.uid,
+          createdAt: Timestamp.now()
+        }),
+        awaitingRole: role === 'student' ? 'teacher' : 'student',
+        updatedAt: serverTimestamp()
+      });
+
+      if (role !== 'student' && ticket.createdBy) {
+        await addDoc(collection(db, 'notifications'), {
+          userId: ticket.createdBy,
+          title: 'Help desk reply',
+          message: 'A teacher replied to your help desk ticket.',
+          link: '/student/help',
+          type: 'helpdesk-reply',
+          sourceId: ticket.id,
+          read: false,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      setReplyById((prev) => ({ ...prev, [ticket.id]: '' }));
+    } catch (err) {
+      setError(err.message || 'Could not send reply.');
+    }
+  };
+
+  const resolveTicket = async (ticketId) => {
+    setError('');
+    try {
+      await updateDoc(doc(db, 'helpTickets', ticketId), {
+        status: 'resolved',
+        awaitingRole: 'resolved',
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      setError(err.message || 'Could not resolve ticket.');
+    }
   };
 
   return (
@@ -145,13 +184,24 @@ export default function HelpDesk() {
                   multiline
                   minRows={2}
                 />
-                <Button
-                  variant="outlined"
-                  color="secondary"
-                  onClick={() => sendReply(ticket.id)}
-                >
-                  Send reply
-                </Button>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    onClick={() => sendReply(ticket)}
+                  >
+                    Send reply
+                  </Button>
+                  {role !== 'student' && ticket.status !== 'resolved' ? (
+                    <Button
+                      variant="outlined"
+                      color="success"
+                      onClick={() => resolveTicket(ticket.id)}
+                    >
+                      Mark resolved
+                    </Button>
+                  ) : null}
+                </Stack>
               </Stack>
             </Paper>
           ))}

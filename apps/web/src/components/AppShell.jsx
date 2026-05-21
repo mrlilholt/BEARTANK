@@ -28,38 +28,39 @@ import LogoMark from './LogoMark.jsx';
 import { collection, query, where } from 'firebase/firestore';
 import { useCollection } from '../lib/firestore-hooks.js';
 import { db } from '../lib/firebase.js';
+import { PATHS } from '../lib/paths.js';
 
 const teacherNav = [
-  { label: 'Dashboard', to: '/teacher', icon: DashboardRoundedIcon },
-  { label: 'Stages', to: '/teacher/stages', icon: AccountTreeRoundedIcon },
-  { label: 'Approvals', to: '/teacher/approvals', icon: TaskAltRoundedIcon, badge: 'approvals' },
-  { label: 'Teams', to: '/teacher/teams', icon: GroupsRoundedIcon },
-  { label: 'Analytics', to: '/teacher/analytics', icon: InsightsRoundedIcon },
-  { label: 'Resources', to: '/teacher/resources', icon: MenuBookRoundedIcon },
-  { label: 'Announcements', to: '/teacher/announcements', icon: CampaignRoundedIcon },
-  { label: 'Side Hustles', to: '/teacher/side-hustles', icon: BoltRoundedIcon },
-  { label: 'Help Desk', to: '/teacher/helpdesk', icon: HelpRoundedIcon }
+  { label: 'Dashboard', to: PATHS.teacher.root, icon: DashboardRoundedIcon },
+  { label: 'Stages', to: PATHS.teacher.stages, icon: AccountTreeRoundedIcon },
+  { label: 'Approvals', to: PATHS.teacher.approvals, icon: TaskAltRoundedIcon, badge: 'approvals' },
+  { label: 'Teams', to: PATHS.teacher.teams, icon: GroupsRoundedIcon },
+  { label: 'Analytics', to: PATHS.teacher.analytics, icon: InsightsRoundedIcon },
+  { label: 'Resources', to: PATHS.teacher.resources, icon: MenuBookRoundedIcon },
+  { label: 'Announcements', to: PATHS.teacher.announcements, icon: CampaignRoundedIcon },
+  { label: 'Side Hustles', to: PATHS.teacher.sideHustles, icon: BoltRoundedIcon },
+  { label: 'Help Desk', to: PATHS.teacher.helpdesk, icon: HelpRoundedIcon, badge: 'helpdesk' }
 ];
 
 const navByRole = {
   student: [
-    { label: 'Dashboard', to: '/student', icon: DashboardRoundedIcon },
-    { label: 'Company Profile', to: '/student/company', icon: BusinessRoundedIcon },
+    { label: 'Dashboard', to: PATHS.student.root, icon: DashboardRoundedIcon },
+    { label: 'Company Profile', to: PATHS.student.company, icon: BusinessRoundedIcon },
     {
       label: 'Notifications',
-      to: '/student/notifications',
+      to: PATHS.student.notifications,
       icon: NotificationsRoundedIcon,
       badge: 'notifications'
     },
-    { label: 'Resources', to: '/student/resources', icon: MenuBookRoundedIcon },
-    { label: 'Announcements', to: '/student/announcements', icon: CampaignRoundedIcon },
-    { label: 'Pitch Deck', to: '/student/pitch-deck', icon: SlideshowRoundedIcon },
-    { label: 'Help Desk', to: '/student/help', icon: HelpRoundedIcon }
+    { label: 'Resources', to: PATHS.student.resources, icon: MenuBookRoundedIcon },
+    { label: 'Announcements', to: PATHS.student.announcements, icon: CampaignRoundedIcon },
+    { label: 'Pitch Deck', to: PATHS.student.pitchDeck, icon: SlideshowRoundedIcon },
+    { label: 'Help Desk', to: PATHS.student.help, icon: HelpRoundedIcon, badge: 'student-helpdesk' }
   ],
   teacher: teacherNav,
   super_admin: [
     ...teacherNav,
-    { label: 'Admin', to: '/admin', icon: AdminPanelSettingsRoundedIcon, isBottom: true }
+    { label: 'Admin', to: PATHS.admin, icon: AdminPanelSettingsRoundedIcon, isBottom: true }
   ]
 };
 
@@ -68,7 +69,7 @@ export default function AppShell({ title, subtitle, kicker, actions, children })
   const { user, role, signOut } = useAuth();
   const navItems = navByRole[role] || [];
   const roleLabel = role ? ROLE_LABELS[role] : 'Guest';
-  const dashboardPath = DASHBOARD_BY_ROLE[role] || '/';
+  const dashboardPath = DASHBOARD_BY_ROLE[role] || PATHS.home;
   const [scale, setScale] = useState(1);
   const baseWidth = 1280;
   const sidebarWidth = 240;
@@ -104,6 +105,24 @@ export default function AppShell({ title, subtitle, kicker, actions, children })
   }, [user?.uid, role]);
   const { data: approvals } = useCollection(approvalsQuery);
   const approvalsCount = approvals.length;
+
+  const helpDeskQuery = useMemo(() => {
+    if (!user || (role !== 'teacher' && role !== 'super_admin')) return null;
+    return query(collection(db, 'helpTickets'), where('awaitingRole', '==', 'teacher'));
+  }, [user?.uid, role]);
+  const { data: helpTickets } = useCollection(helpDeskQuery);
+  const helpDeskCount = helpTickets.length;
+
+  const studentHelpDeskQuery = useMemo(() => {
+    if (!user || role !== 'student') return null;
+    return query(
+      collection(db, 'helpTickets'),
+      where('createdBy', '==', user.uid),
+      where('awaitingRole', '==', 'student')
+    );
+  }, [user?.uid, role]);
+  const { data: studentHelpTickets } = useCollection(studentHelpDeskQuery);
+  const studentHelpDeskCount = studentHelpTickets.length;
 
   return (
     <Box
@@ -182,6 +201,10 @@ export default function AppShell({ title, subtitle, kicker, actions, children })
                     ? unreadCount
                     : item.badge === 'approvals'
                     ? approvalsCount
+                    : item.badge === 'helpdesk'
+                    ? helpDeskCount
+                    : item.badge === 'student-helpdesk'
+                    ? studentHelpDeskCount
                     : 0;
                 const label = (
                   <Typography
@@ -324,7 +347,7 @@ export default function AppShell({ title, subtitle, kicker, actions, children })
               ) : (
                 <Button
                   component={RouterLink}
-                  to="/login"
+                  to={PATHS.login}
                   variant="contained"
                   color="primary"
                   fullWidth

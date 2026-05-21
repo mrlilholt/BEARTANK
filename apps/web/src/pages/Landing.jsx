@@ -3,10 +3,11 @@ import { Link as RouterLink } from 'react-router-dom';
 import AppShell from '../components/AppShell.jsx';
 import StatCard from '../components/StatCard.jsx';
 import { DASHBOARD_BY_ROLE, useAuth } from '../lib/auth-context.jsx';
+import { PATHS } from '../lib/paths.js';
 
 export default function Landing() {
   const { user, role } = useAuth();
-  const dashboardPath = DASHBOARD_BY_ROLE[role] || '/onboarding';
+  const dashboardPath = DASHBOARD_BY_ROLE[role] || PATHS.onboarding;
 
   return (
     <AppShell
@@ -20,11 +21,11 @@ export default function Landing() {
               Go to dashboard
             </Button>
           ) : (
-            <Button variant="contained" color="secondary" component={RouterLink} to="/login">
+            <Button variant="contained" color="secondary" component={RouterLink} to={PATHS.login}>
               Enter BEARTANK
             </Button>
           )}
-          <Button variant="outlined" color="secondary" component={RouterLink} to="/onboarding">
+          <Button variant="outlined" color="secondary" component={RouterLink} to={PATHS.onboarding}>
             Start onboarding
           </Button>
         </>

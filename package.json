@@ -7,9 +7,15 @@
   ],
   "scripts": {
     "dev": "npm --workspace apps/web run dev",
-    "build": "npm --workspace apps/web run build",
+    "build": "npm run env:check && npm --workspace apps/web run build",
     "preview": "npm --workspace apps/web run preview",
-    "lint": "npm --workspace apps/web run lint"
+    "lint": "npm --workspace apps/web run lint",
+    "env:check": "node ./scripts/validate-web-env.mjs",
+    "release:preflight": "npm run env:check -- --release && npm run lint && npm run build",
+    "deploy:indexes": "firebase deploy --project ${FIREBASE_PROJECT_ALIAS:-staging} --only firestore:indexes",
+    "deploy:rules": "firebase deploy --project ${FIREBASE_PROJECT_ALIAS:-staging} --only firestore:rules",
+    "deploy:functions": "firebase deploy --project ${FIREBASE_PROJECT_ALIAS:-staging} --only functions",
+    "deploy:backend": "npm run deploy:indexes && npm run deploy:rules && npm run deploy:functions"
   },
   "dependencies": {
     "html2canvas": "^1.4.1"
