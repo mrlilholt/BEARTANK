@@ -1,9 +1,12 @@
 import {
   Alert,
   Button,
+  Chip,
   Paper,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography
 } from '@mui/material';
 import {
@@ -34,12 +37,21 @@ export default function HelpDesk() {
     return query(collection(db, 'helpTickets'), orderBy('createdAt', 'desc'));
   }, [user?.uid, role]);
   const { data: tickets } = useCollection(ticketsQuery);
+  const activeTickets = useMemo(
+    () => tickets.filter((ticket) => ticket.status !== 'resolved'),
+    [tickets]
+  );
+  const archivedTickets = useMemo(
+    () => tickets.filter((ticket) => ticket.status === 'resolved'),
+    [tickets]
+  );
 
   const [stage, setStage] = useState('');
   const [task, setTask] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [replyById, setReplyById] = useState({});
+  const [view, setView] = useState('active');
 
   const createTicket = async () => {
     setError('');
@@ -127,6 +139,38 @@ export default function HelpDesk() {
       subtitle="Open a ticket tied to your current stage or task. Teachers respond in-app."
     >
       <Stack spacing={3}>
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={1.5}
+          alignItems={{ sm: 'center' }}
+          justifyContent="space-between"
+        >
+          <Stack direction="row" spacing={1} flexWrap="wrap">
+            <Chip
+              color="secondary"
+              label={`${activeTickets.length} active ${activeTickets.length === 1 ? 'ticket' : 'tickets'}`}
+            />
+            {archivedTickets.length > 0 ? (
+              <Chip
+                variant="outlined"
+                label={`${archivedTickets.length} archived`}
+              />
+            ) : null}
+          </Stack>
+          <ToggleButtonGroup
+            exclusive
+            value={view}
+            onChange={(_, nextView) => {
+              if (nextView) setView(nextView);
+            }}
+            size="small"
+            color="secondary"
+          >
+            <ToggleButton value="active">Queue</ToggleButton>
+            <ToggleButton value="archive">Archive</ToggleButton>
+          </ToggleButtonGroup>
+        </Stack>
+
         {role === 'student' ? (
           <Paper sx={{ p: 3, maxWidth: 720 }}>
             <Stack spacing={2}>
@@ -157,56 +201,84 @@ export default function HelpDesk() {
           </Paper>
         ) : null}
 
-        <Stack spacing={2}>
-          {tickets.length === 0 ? (
-            <Paper sx={{ p: 3 }}>
-              <Typography color="text.secondary">No help tickets yet.</Typography>
-            </Paper>
-          ) : null}
-          {tickets.map((ticket) => (
-            <Paper key={ticket.id} sx={{ p: 3 }}>
-              <Stack spacing={1.5}>
-                <Typography variant="h6">Help request</Typography>
+        {view === 'active' ? (
+          <Stack spacing={2}>
+            {activeTickets.length === 0 ? (
+              <Paper sx={{ p: 3 }}>
                 <Typography color="text.secondary">
-                  Stage: {ticket.stage || '—'} • Task: {ticket.task || '—'}
+                  {role === 'student' ? 'No active help tickets.' : 'No active help tickets in the queue.'}
                 </Typography>
-                <Typography color="text.secondary">Status: {ticket.status}</Typography>
-                {(ticket.messages || []).map((msg, index) => (
-                  <Typography key={index} variant="body2" color="text.secondary">
-                    {msg.body}
+              </Paper>
+            ) : null}
+            {activeTickets.map((ticket) => (
+              <Paper key={ticket.id} sx={{ p: 3 }}>
+                <Stack spacing={1.5}>
+                  <Typography variant="h6">Help request</Typography>
+                  <Typography color="text.secondary">
+                    Stage: {ticket.stage || '—'} • Task: {ticket.task || '—'}
                   </Typography>
-                ))}
-                <TextField
-                  label="Reply"
-                  value={replyById[ticket.id] || ''}
-                  onChange={(event) =>
-                    setReplyById((prev) => ({ ...prev, [ticket.id]: event.target.value }))
-                  }
-                  multiline
-                  minRows={2}
-                />
-                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
-                  <Button
-                    variant="outlined"
-                    color="secondary"
-                    onClick={() => sendReply(ticket)}
-                  >
-                    Send reply
-                  </Button>
-                  {role !== 'student' && ticket.status !== 'resolved' ? (
+                  <Typography color="text.secondary">Status: {ticket.status}</Typography>
+                  {(ticket.messages || []).map((msg, index) => (
+                    <Typography key={index} variant="body2" color="text.secondary">
+                      {msg.body}
+                    </Typography>
+                  ))}
+                  <TextField
+                    label="Reply"
+                    value={replyById[ticket.id] || ''}
+                    onChange={(event) =>
+                      setReplyById((prev) => ({ ...prev, [ticket.id]: event.target.value }))
+                    }
+                    multiline
+                    minRows={2}
+                  />
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
                     <Button
                       variant="outlined"
-                      color="success"
-                      onClick={() => resolveTicket(ticket.id)}
+                      color="secondary"
+                      onClick={() => sendReply(ticket)}
                     >
-                      Mark resolved
+                      Send reply
                     </Button>
-                  ) : null}
+                    {role !== 'student' && ticket.status !== 'resolved' ? (
+                      <Button
+                        variant="outlined"
+                        color="success"
+                        onClick={() => resolveTicket(ticket.id)}
+                      >
+                        Mark resolved
+                      </Button>
+                    ) : null}
+                  </Stack>
                 </Stack>
-              </Stack>
-            </Paper>
-          ))}
-        </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        ) : (
+          <Stack spacing={2}>
+            {archivedTickets.length === 0 ? (
+              <Paper sx={{ p: 3 }}>
+                <Typography color="text.secondary">No archived help tickets.</Typography>
+              </Paper>
+            ) : null}
+            {archivedTickets.map((ticket) => (
+              <Paper key={ticket.id} sx={{ p: 3, opacity: 0.9 }}>
+                <Stack spacing={1.5}>
+                  <Typography variant="h6">Resolved help request</Typography>
+                  <Typography color="text.secondary">
+                    Stage: {ticket.stage || '—'} • Task: {ticket.task || '—'}
+                  </Typography>
+                  <Typography color="text.secondary">Status: {ticket.status}</Typography>
+                  {(ticket.messages || []).map((msg, index) => (
+                    <Typography key={index} variant="body2" color="text.secondary">
+                      {msg.body}
+                    </Typography>
+                  ))}
+                </Stack>
+              </Paper>
+            ))}
+          </Stack>
+        )}
       </Stack>
     </AppShell>
   );
