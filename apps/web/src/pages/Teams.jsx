@@ -10,6 +10,8 @@ import {
   Paper,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
   Typography
 } from '@mui/material';
 import {
@@ -79,6 +81,7 @@ export default function Teams() {
   const [addMemberByTeam, setAddMemberByTeam] = useState({});
   const [addMemberErrorByTeam, setAddMemberErrorByTeam] = useState({});
   const [dissolvingTeamId, setDissolvingTeamId] = useState('');
+  const [teamView, setTeamView] = useState('active');
 
   const parseEmails = (value) =>
     value
@@ -361,6 +364,8 @@ export default function Teams() {
         memberIds: [],
         memberEmails: [],
         status: 'archived',
+        dissolvedAt: serverTimestamp(),
+        dissolvedBy: user?.uid || null,
         updatedAt: serverTimestamp()
       });
     } catch (err) {
@@ -372,7 +377,21 @@ export default function Teams() {
 
   const pendingRequests = teamRequests.filter((request) => request.status === 'pending');
   const activeTeams = useMemo(
-    () => teams.filter((team) => (team.status || 'active') !== 'archived'),
+    () =>
+      teams.filter((team) => {
+        const memberIds = team.memberIds || [];
+        const status = team.status || 'active';
+        return status !== 'archived' && memberIds.length > 0;
+      }),
+    [teams]
+  );
+  const dissolvedTeams = useMemo(
+    () =>
+      teams.filter((team) => {
+        const memberIds = team.memberIds || [];
+        const status = team.status || 'active';
+        return status === 'archived' || memberIds.length === 0;
+      }),
     [teams]
   );
   const userMap = useMemo(() => new Map(users.map((item) => [item.id, item])), [users]);
@@ -625,252 +644,313 @@ export default function Teams() {
         </Stack>
 
         <Stack spacing={2}>
-          <Typography variant="h6">Active teams</Typography>
-          {activeTeams.length === 0 ? (
-            <Paper sx={{ p: 3 }}>
-              <Typography color="text.secondary">No teams created yet.</Typography>
-            </Paper>
-          ) : null}
-          {activeTeams.map((team) => {
-            const memberIds = team.memberIds || [];
-            const memberStats = teamContributionMap.get(team.id) || new Map();
-            const teamPoints = teamPointsMap.get(team.id) || 0;
-            const teamTotalPoints =
-              teamPoints +
-              memberIds.reduce(
-                (sum, memberId) => sum + Number(memberStats.get(memberId)?.points || 0),
-                0
-              );
-            const stageList = teamStageMap.get(team.id) || [];
-            const completedStages = stageList.filter((stage) => stage.status === 'complete').length;
-            const totalStages = stageList.length || stages.length || 0;
-            const activeStage = stageList.find((stage) => stage.status === 'active');
-            const averageProgress = totalStages
-              ? Math.round(
-                  stageList.reduce((sum, stage) => sum + (stage.progress || 0), 0) / totalStages
-                )
-              : 0;
-            const brandKitSubmission = brandKitByTeam.get(team.id);
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={1.5}
+            alignItems={{ sm: 'center' }}
+            justifyContent="space-between"
+          >
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Chip
+                color="secondary"
+                label={`${activeTeams.length} active ${activeTeams.length === 1 ? 'team' : 'teams'}`}
+              />
+              {dissolvedTeams.length > 0 ? (
+                <Chip variant="outlined" label={`${dissolvedTeams.length} dissolved`} />
+              ) : null}
+            </Stack>
+            <ToggleButtonGroup
+              exclusive
+              value={teamView}
+              onChange={(_, nextView) => {
+                if (nextView) setTeamView(nextView);
+              }}
+              size="small"
+              color="secondary"
+            >
+              <ToggleButton value="active">Teams</ToggleButton>
+              <ToggleButton value="dissolved">Dissolved</ToggleButton>
+            </ToggleButtonGroup>
+          </Stack>
 
-            return (
-              <Paper key={team.id} sx={{ p: 3 }}>
-                <Stack spacing={2}>
-                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
-                    <Stack spacing={0.5}>
-                      <Typography variant="h6">{team.companyName}</Typography>
-                      <Typography color="text.secondary">
-                        {team.teamName || 'Team'} • {memberIds.length} members
-                      </Typography>
-                    </Stack>
-                    <Stack spacing={0.5} alignItems={{ md: 'flex-end' }}>
-                      <Typography variant="subtitle2">Stage completion</Typography>
-                      <Typography variant="h6">{averageProgress}%</Typography>
-                    </Stack>
-                  </Stack>
+          {teamView === 'active' ? (
+            <>
+              <Typography variant="h6">Active teams</Typography>
+              {activeTeams.length === 0 ? (
+                <Paper sx={{ p: 3 }}>
+                  <Typography color="text.secondary">No active teams.</Typography>
+                </Paper>
+              ) : null}
+              {activeTeams.map((team) => {
+                const memberIds = team.memberIds || [];
+                const memberStats = teamContributionMap.get(team.id) || new Map();
+                const teamPoints = teamPointsMap.get(team.id) || 0;
+                const teamTotalPoints =
+                  teamPoints +
+                  memberIds.reduce(
+                    (sum, memberId) => sum + Number(memberStats.get(memberId)?.points || 0),
+                    0
+                  );
+                const stageList = teamStageMap.get(team.id) || [];
+                const completedStages = stageList.filter((stage) => stage.status === 'complete').length;
+                const totalStages = stageList.length || stages.length || 0;
+                const activeStage = stageList.find((stage) => stage.status === 'active');
+                const averageProgress = totalStages
+                  ? Math.round(
+                      stageList.reduce((sum, stage) => sum + (stage.progress || 0), 0) / totalStages
+                    )
+                  : 0;
+                const brandKitSubmission = brandKitByTeam.get(team.id);
 
-                  <LinearProgress
-                    variant="determinate"
-                    value={averageProgress}
-                    sx={{
-                      height: 8,
-                      borderRadius: 999,
-                      bgcolor: 'rgba(108, 99, 255, 0.15)',
-                      '& .MuiLinearProgress-bar': {
-                        borderRadius: 999,
-                        background: 'linear-gradient(90deg, #6c63ff 0%, #9a94ff 100%)'
-                      }
-                    }}
-                  />
-
-                  <Stack direction="row" spacing={1} flexWrap="wrap">
-                    <Chip
-                      label={`${completedStages}/${totalStages || 0} stages complete`}
-                      variant="outlined"
-                    />
-                    <Chip
-                      label={`Team total: ${teamTotalPoints.toLocaleString()} BB`}
-                      color="secondary"
-                      variant="outlined"
-                    />
-                    {activeStage ? (
-                      <Chip
-                        label={`Active: ${stageTitleMap.get(activeStage.stageId) || 'Stage'}`}
-                        color="secondary"
-                      />
-                    ) : null}
-                    {teamPoints > 0 ? (
-                      <Chip
-                        label={`Team-awarded: ${teamPoints.toLocaleString()} BB`}
-                        color="secondary"
-                        variant="outlined"
-                      />
-                    ) : null}
-                  </Stack>
-
-                  <Divider />
-
-                  <Stack spacing={1}>
-                    <Typography variant="subtitle2">Member contributions</Typography>
-                    {memberIds.length === 0 ? (
-                      <Typography color="text.secondary">No members assigned yet.</Typography>
-                    ) : (
-                      memberIds.map((memberId) => {
-                        const member = userMap.get(memberId);
-                        const stats = memberStats.get(memberId) || {
-                          approved: 0,
-                          pending: 0,
-                          needsChanges: 0,
-                          points: 0
-                        };
-                        return (
-                          <Stack
-                            key={memberId}
-                            direction={{ xs: 'column', sm: 'row' }}
-                            spacing={2}
-                            alignItems={{ sm: 'center' }}
-                            justifyContent="space-between"
-                          >
-                            <Stack direction="row" spacing={1.5} alignItems="center">
-                              <Avatar src={member?.photoURL || ''} alt={member?.fullName || 'Student'}>
-                                {(member?.preferredName ||
-                                  member?.fullName ||
-                                  member?.email ||
-                                  'B')[0]?.toUpperCase?.()}
-                              </Avatar>
-                              <Stack spacing={0.2}>
-                                <Typography variant="subtitle2">
-                                  {member?.preferredName ||
-                                    member?.fullName ||
-                                    member?.email ||
-                                    'Student'}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  {member?.email || memberId}
-                                </Typography>
-                              </Stack>
-                            </Stack>
-                            <Stack direction="row" spacing={1} flexWrap="wrap">
-                              <Chip size="small" color="success" label={`${stats.approved} approved`} />
-                              <Chip size="small" label={`${stats.pending} pending`} variant="outlined" />
-                              {stats.needsChanges > 0 ? (
-                                <Chip size="small" color="warning" label={`${stats.needsChanges} edits`} />
-                              ) : null}
-                              <Chip size="small" label={`${stats.points} BB`} variant="outlined" />
-                            </Stack>
-                          </Stack>
-                        );
-                      })
-                    )}
-                  </Stack>
-
-                  <Divider />
-
-                  <Stack spacing={1}>
-                    <Typography variant="subtitle2">Add team member</Typography>
-                    {addMemberErrorByTeam[team.id] ? (
-                      <Alert severity="error">{addMemberErrorByTeam[team.id]}</Alert>
-                    ) : null}
-                    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
-                      <TextField
-                        label="Student email"
-                        value={addMemberByTeam[team.id] || ''}
-                        onChange={(event) =>
-                          setAddMemberByTeam((prev) => ({
-                            ...prev,
-                            [team.id]: event.target.value
-                          }))
-                        }
-                        sx={{ flex: 1 }}
-                      />
-                      <Button
-                        variant="contained"
-                        color="secondary"
-                        onClick={() => handleAddMember(team)}
-                      >
-                        Add to team
-                      </Button>
-                    </Stack>
-                    <Typography variant="caption" color="text.secondary">
-                      Student must have already logged in once so their account exists.
-                    </Typography>
-                    {role === 'super_admin' ? (
-                      <Button
-                        variant="outlined"
-                        color="error"
-                        onClick={() => handleDissolveTeam(team)}
-                        disabled={dissolvingTeamId === team.id}
-                        sx={{ alignSelf: 'flex-start' }}
-                      >
-                        {dissolvingTeamId === team.id ? 'Dissolving…' : 'Dissolve team'}
-                      </Button>
-                    ) : null}
-                  </Stack>
-
-                  {brandKitSubmission ? (
-                    <>
-                      <Divider />
-                      <Stack spacing={1.5}>
-                        <Typography variant="subtitle2">Brand kit review</Typography>
-                        <Typography color="text.secondary">
-                          Status: {brandKitSubmission.status}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Company name: {brandKitSubmission.content?.companyName || '—'}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Mission: {brandKitSubmission.content?.mission || '—'}
-                        </Typography>
-                        {brandKitSubmission.content?.logoUrl ? (
-                          <Typography variant="caption" color="text.secondary">
-                            Logo link provided
+                return (
+                  <Paper key={team.id} sx={{ p: 3 }}>
+                    <Stack spacing={2}>
+                      <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
+                        <Stack spacing={0.5}>
+                          <Typography variant="h6">{team.companyName}</Typography>
+                          <Typography color="text.secondary">
+                            {team.teamName || 'Team'} • {memberIds.length} members
                           </Typography>
-                        ) : null}
+                        </Stack>
+                        <Stack spacing={0.5} alignItems={{ md: 'flex-end' }}>
+                          <Typography variant="subtitle2">Stage completion</Typography>
+                          <Typography variant="h6">{averageProgress}%</Typography>
+                        </Stack>
+                      </Stack>
 
-                        {brandKitSubmission.status === 'submitted' ? (
-                          <>
-                            <TextField
-                              label="Brand kit feedback"
-                              multiline
-                              minRows={2}
-                              value={brandFeedbackById[brandKitSubmission.id] || ''}
-                              onChange={(event) =>
-                                setBrandFeedbackById((prev) => ({
-                                  ...prev,
-                                  [brandKitSubmission.id]: event.target.value
-                                }))
-                              }
-                            />
-                            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-                              <Button
-                                variant="contained"
-                                color="secondary"
-                                onClick={() =>
-                                  handleBrandKitDecision(brandKitSubmission, team, 'approved')
-                                }
-                                sx={{ width: { xs: '100%', sm: 'auto' } }}
-                              >
-                                Approve brand kit
-                              </Button>
-                              <Button
-                                variant="outlined"
-                                color="secondary"
-                                onClick={() =>
-                                  handleBrandKitDecision(brandKitSubmission, team, 'needs_changes')
-                                }
-                                sx={{ width: { xs: '100%', sm: 'auto' } }}
-                              >
-                                Needs changes
-                              </Button>
-                            </Stack>
-                          </>
+                      <LinearProgress
+                        variant="determinate"
+                        value={averageProgress}
+                        sx={{
+                          height: 8,
+                          borderRadius: 999,
+                          bgcolor: 'rgba(108, 99, 255, 0.15)',
+                          '& .MuiLinearProgress-bar': {
+                            borderRadius: 999,
+                            background: 'linear-gradient(90deg, #6c63ff 0%, #9a94ff 100%)'
+                          }
+                        }}
+                      />
+
+                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                        <Chip
+                          label={`${completedStages}/${totalStages || 0} stages complete`}
+                          variant="outlined"
+                        />
+                        <Chip
+                          label={`Team total: ${teamTotalPoints.toLocaleString()} BB`}
+                          color="secondary"
+                          variant="outlined"
+                        />
+                        {activeStage ? (
+                          <Chip
+                            label={`Active: ${stageTitleMap.get(activeStage.stageId) || 'Stage'}`}
+                            color="secondary"
+                          />
+                        ) : null}
+                        {teamPoints > 0 ? (
+                          <Chip
+                            label={`Team-awarded: ${teamPoints.toLocaleString()} BB`}
+                            color="secondary"
+                            variant="outlined"
+                          />
                         ) : null}
                       </Stack>
-                    </>
-                  ) : null}
-                </Stack>
-              </Paper>
-            );
-          })}
+
+                      <Divider />
+
+                      <Stack spacing={1}>
+                        <Typography variant="subtitle2">Member contributions</Typography>
+                        {memberIds.length === 0 ? (
+                          <Typography color="text.secondary">No members assigned yet.</Typography>
+                        ) : (
+                          memberIds.map((memberId) => {
+                            const member = userMap.get(memberId);
+                            const stats = memberStats.get(memberId) || {
+                              approved: 0,
+                              pending: 0,
+                              needsChanges: 0,
+                              points: 0
+                            };
+                            return (
+                              <Stack
+                                key={memberId}
+                                direction={{ xs: 'column', sm: 'row' }}
+                                spacing={2}
+                                alignItems={{ sm: 'center' }}
+                                justifyContent="space-between"
+                              >
+                                <Stack direction="row" spacing={1.5} alignItems="center">
+                                  <Avatar src={member?.photoURL || ''} alt={member?.fullName || 'Student'}>
+                                    {(member?.preferredName ||
+                                      member?.fullName ||
+                                      member?.email ||
+                                      'B')[0]?.toUpperCase?.()}
+                                  </Avatar>
+                                  <Stack spacing={0.2}>
+                                    <Typography variant="subtitle2">
+                                      {member?.preferredName ||
+                                        member?.fullName ||
+                                        member?.email ||
+                                        'Student'}
+                                    </Typography>
+                                    <Typography variant="caption" color="text.secondary">
+                                      {member?.email || memberId}
+                                    </Typography>
+                                  </Stack>
+                                </Stack>
+                                <Stack direction="row" spacing={1} flexWrap="wrap">
+                                  <Chip size="small" color="success" label={`${stats.approved} approved`} />
+                                  <Chip size="small" label={`${stats.pending} pending`} variant="outlined" />
+                                  {stats.needsChanges > 0 ? (
+                                    <Chip size="small" color="warning" label={`${stats.needsChanges} edits`} />
+                                  ) : null}
+                                  <Chip size="small" label={`${stats.points} BB`} variant="outlined" />
+                                </Stack>
+                              </Stack>
+                            );
+                          })
+                        )}
+                      </Stack>
+
+                      <Divider />
+
+                      <Stack spacing={1}>
+                        <Typography variant="subtitle2">Add team member</Typography>
+                        {addMemberErrorByTeam[team.id] ? (
+                          <Alert severity="error">{addMemberErrorByTeam[team.id]}</Alert>
+                        ) : null}
+                        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
+                          <TextField
+                            label="Student email"
+                            value={addMemberByTeam[team.id] || ''}
+                            onChange={(event) =>
+                              setAddMemberByTeam((prev) => ({
+                                ...prev,
+                                [team.id]: event.target.value
+                              }))
+                            }
+                            sx={{ flex: 1 }}
+                          />
+                          <Button
+                            variant="contained"
+                            color="secondary"
+                            onClick={() => handleAddMember(team)}
+                          >
+                            Add to team
+                          </Button>
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary">
+                          Student must have already logged in once so their account exists.
+                        </Typography>
+                        {role === 'super_admin' ? (
+                          <Button
+                            variant="outlined"
+                            color="error"
+                            onClick={() => handleDissolveTeam(team)}
+                            disabled={dissolvingTeamId === team.id}
+                            sx={{ alignSelf: 'flex-start' }}
+                          >
+                            {dissolvingTeamId === team.id ? 'Dissolving…' : 'Dissolve team'}
+                          </Button>
+                        ) : null}
+                      </Stack>
+
+                      {brandKitSubmission ? (
+                        <>
+                          <Divider />
+                          <Stack spacing={1.5}>
+                            <Typography variant="subtitle2">Brand kit review</Typography>
+                            <Typography color="text.secondary">
+                              Status: {brandKitSubmission.status}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              Company name: {brandKitSubmission.content?.companyName || '—'}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              Mission: {brandKitSubmission.content?.mission || '—'}
+                            </Typography>
+                            {brandKitSubmission.content?.logoUrl ? (
+                              <Typography variant="caption" color="text.secondary">
+                                Logo link provided
+                              </Typography>
+                            ) : null}
+
+                            {brandKitSubmission.status === 'submitted' ? (
+                              <>
+                                <TextField
+                                  label="Brand kit feedback"
+                                  multiline
+                                  minRows={2}
+                                  value={brandFeedbackById[brandKitSubmission.id] || ''}
+                                  onChange={(event) =>
+                                    setBrandFeedbackById((prev) => ({
+                                      ...prev,
+                                      [brandKitSubmission.id]: event.target.value
+                                    }))
+                                  }
+                                />
+                                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                                  <Button
+                                    variant="contained"
+                                    color="secondary"
+                                    onClick={() =>
+                                      handleBrandKitDecision(brandKitSubmission, team, 'approved')
+                                    }
+                                    sx={{ width: { xs: '100%', sm: 'auto' } }}
+                                  >
+                                    Approve brand kit
+                                  </Button>
+                                  <Button
+                                    variant="outlined"
+                                    color="secondary"
+                                    onClick={() =>
+                                      handleBrandKitDecision(brandKitSubmission, team, 'needs_changes')
+                                    }
+                                    sx={{ width: { xs: '100%', sm: 'auto' } }}
+                                  >
+                                    Needs changes
+                                  </Button>
+                                </Stack>
+                              </>
+                            ) : null}
+                          </Stack>
+                        </>
+                      ) : null}
+                    </Stack>
+                  </Paper>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              <Typography variant="h6">Dissolved teams</Typography>
+              {dissolvedTeams.length === 0 ? (
+                <Paper sx={{ p: 3 }}>
+                  <Typography color="text.secondary">No dissolved teams.</Typography>
+                </Paper>
+              ) : null}
+              {dissolvedTeams.map((team) => (
+                <Paper key={team.id} sx={{ p: 3, opacity: 0.92 }}>
+                  <Stack spacing={1}>
+                    <Typography variant="h6">{team.companyName || 'Former team'}</Typography>
+                    <Typography color="text.secondary">
+                      {team.teamName || 'Team'} • dissolved
+                    </Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap">
+                      <Chip label="Dissolved" variant="outlined" />
+                      {team.dissolvedAt?.toDate ? (
+                        <Chip
+                          label={`On ${team.dissolvedAt.toDate().toLocaleDateString()}`}
+                          variant="outlined"
+                        />
+                      ) : null}
+                    </Stack>
+                  </Stack>
+                </Paper>
+              ))}
+            </>
+          )}
         </Stack>
       </Stack>
     </AppShell>
