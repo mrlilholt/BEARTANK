@@ -14,7 +14,9 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppShell from '../components/AppShell.jsx';
+import { classCode as configuredClassCode } from '../lib/env.js';
 import { DASHBOARD_BY_ROLE, useAuth } from '../lib/auth-context.jsx';
+import { PATHS } from '../lib/paths.js';
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -27,7 +29,7 @@ export default function Onboarding() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const expectedCode = import.meta.env.VITE_CLASS_CODE || '';
+  const expectedCode = configuredClassCode;
   const showClassCode = roleChoice === 'student' && !isSuperAdmin;
 
   const roleLocked = useMemo(() => {
@@ -62,8 +64,8 @@ export default function Onboarding() {
 
       const destination =
         roleChoice === 'teacher' && !isSuperAdmin
-          ? '/pending'
-          : DASHBOARD_BY_ROLE[isSuperAdmin ? 'super_admin' : roleChoice] || '/student';
+          ? PATHS.pending
+          : DASHBOARD_BY_ROLE[isSuperAdmin ? 'super_admin' : roleChoice] || PATHS.student.root;
 
       navigate(destination);
     } catch (err) {
@@ -77,10 +79,10 @@ export default function Onboarding() {
     if (!user) return;
     if (!profile?.onboarded) return;
     if (status === 'pending') {
-      navigate('/pending');
+      navigate(PATHS.pending);
       return;
     }
-    navigate(DASHBOARD_BY_ROLE[role] || '/student');
+    navigate(DASHBOARD_BY_ROLE[role] || PATHS.student.root);
   }, [user, profile, status, role, navigate]);
 
   return (

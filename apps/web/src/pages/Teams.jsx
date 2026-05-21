@@ -14,8 +14,10 @@ import {
 } from '@mui/material';
 import {
   addDoc,
+  arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -33,7 +35,7 @@ import { useCollection } from '../lib/firestore-hooks.js';
 import { db } from '../lib/firebase.js';
 
 export default function Teams() {
-  const { user } = useAuth();
+  const { user, role } = useAuth();
   const requestsQuery = useMemo(
     () => query(collection(db, 'teamRequests'), orderBy('createdAt', 'desc')),
     []
@@ -76,6 +78,7 @@ export default function Teams() {
   const [brandFeedbackById, setBrandFeedbackById] = useState({});
   const [addMemberByTeam, setAddMemberByTeam] = useState({});
   const [addMemberErrorByTeam, setAddMemberErrorByTeam] = useState({});
+  const [dissolvingTeamId, setDissolvingTeamId] = useState('');
 
   const parseEmails = (value) =>
     value
@@ -102,6 +105,25 @@ export default function Teams() {
       snapshot.forEach((docSnap) => ids.add(docSnap.id));
     }
     return Array.from(ids);
+  };
+
+  const initializeTeamStages = async (teamId) => {
+    const stageInitPromises = stages.map(async (stage, index) => {
+      const docId = `${teamId}_${stage.id}`;
+      const stageRef = doc(db, 'teamStages', docId);
+      const existing = await getDoc(stageRef);
+      if (existing.exists()) return;
+      await setDoc(stageRef, {
+        teamId,
+        stageId: stage.id,
+        order: Number(stage.order || index + 1),
+        status: index === 0 ? 'active' : 'locked',
+        progress: 0,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    });
+    await Promise.all(stageInitPromises);
   };
 
   const createTeam = async ({ request } = {}) => {
@@ -132,30 +154,15 @@ export default function Teams() {
       updatedAt: serverTimestamp()
     });
 
-    const stageInitPromises = stages.map(async (stage, index) => {
-      const docId = `${teamRef.id}_${stage.id}`;
-      const stageRef = doc(db, 'teamStages', docId);
-      const existing = await getDoc(stageRef);
-      if (existing.exists()) return;
-      await setDoc(stageRef, {
-        teamId: teamRef.id,
-        stageId: stage.id,
-        order: Number(stage.order || index + 1),
-        status: index === 0 ? 'active' : 'locked',
-        progress: 0,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
-    });
-    await Promise.all(stageInitPromises);
+    await initializeTeamStages(teamRef.id);
 
     await Promise.all(
       Array.from(memberIds).map((memberId) =>
-        updateDoc(doc(db, 'users', memberId), {
-          teamId: teamRef.id,
-          companyName: nextCompanyName,
-          teamName: nextTeamName || nextCompanyName,
-          updatedAt: serverTimestamp()
+        assignMemberToTeam({
+          memberId,
+          nextTeamId: teamRef.id,
+          nextCompanyName,
+          nextTeamName: nextTeamName || nextCompanyName
         })
       )
     );
@@ -179,6 +186,80 @@ export default function Teams() {
       status: 'rejected',
       resolvedBy: user?.uid || null,
       resolvedAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+  };
+
+  const assignMemberToTeam = async ({
+    memberId,
+    nextTeamId,
+    nextCompanyName,
+    nextTeamName
+  }) => {
+    const memberRef = doc(db, 'users', memberId);
+    const memberSnap = await getDoc(memberRef);
+    const memberData = memberSnap.exists() ? memberSnap.data() : {};
+    const previousTeamId = memberData.teamId || null;
+    const previousCompanyName = memberData.companyName || '';
+    const previousTeamName = memberData.teamName || '';
+    const memberEmail = memberData.email || '';
+
+    if (previousTeamId && previousTeamId !== nextTeamId) {
+      const previousTeamRef = doc(db, 'teams', previousTeamId);
+      const previousTeamSnap = await getDoc(previousTeamRef);
+      if (previousTeamSnap.exists()) {
+        const previousTeam = previousTeamSnap.data() || {};
+        const previousMemberIds = previousTeam.memberIds || [];
+        const isSoloTeam = previousMemberIds.length === 1 && previousMemberIds[0] === memberId;
+
+        await updateDoc(previousTeamRef, {
+          memberIds: arrayRemove(memberId),
+          memberEmails: memberEmail ? arrayRemove(memberEmail) : previousTeam.memberEmails || [],
+          status: isSoloTeam ? 'archived' : previousTeam.status || 'active',
+          updatedAt: serverTimestamp()
+        });
+
+        if (isSoloTeam) {
+          const previousTeamPoints = await getDocs(
+            query(
+              collection(db, 'pointsLedger'),
+              where('entityType', '==', 'team'),
+              where('entityId', '==', previousTeamId)
+            )
+          );
+          const transferablePoints = previousTeamPoints.docs.reduce(
+            (sum, docSnap) => sum + Number(docSnap.data().amount || 0),
+            0
+          );
+
+          if (transferablePoints > 0) {
+            await addDoc(collection(db, 'pointsLedger'), {
+              entityType: 'user',
+              entityId: memberId,
+              amount: transferablePoints,
+              reason: 'team-transfer-credit',
+              sourceId: previousTeamId,
+              message: `Transferred from previous solo team ${previousCompanyName || previousTeamName || 'team'}.`,
+              awardedBy: user?.uid || null,
+              createdAt: serverTimestamp()
+            });
+          }
+        }
+      }
+    }
+
+    await updateDoc(memberRef, {
+      teamId: nextTeamId,
+      companyName: nextCompanyName,
+      teamName: nextTeamName,
+      teamHistory: previousTeamId && previousTeamId !== nextTeamId
+        ? arrayUnion({
+            teamId: previousTeamId,
+            companyName: previousCompanyName,
+            teamName: previousTeamName,
+            leftAt: new Date().toISOString()
+          })
+        : memberData.teamHistory || [],
       updatedAt: serverTimestamp()
     });
   };
@@ -217,17 +298,83 @@ export default function Teams() {
       updatedAt: serverTimestamp()
     });
 
-    await updateDoc(doc(db, 'users', userId), {
-      teamId: team.id,
-      companyName: team.companyName,
-      teamName: team.teamName || team.companyName,
-      updatedAt: serverTimestamp()
+    await assignMemberToTeam({
+      memberId: userId,
+      nextTeamId: team.id,
+      nextCompanyName: team.companyName,
+      nextTeamName: team.teamName || team.companyName
     });
 
     setAddMemberByTeam((prev) => ({ ...prev, [team.id]: '' }));
   };
 
+  const handleDissolveTeam = async (team) => {
+    if (role !== 'super_admin') return;
+    if (!window.confirm(`Dissolve ${team.companyName}? Members will be moved to new solo teams.`)) {
+      return;
+    }
+
+    setError('');
+    setDissolvingTeamId(team.id);
+
+    try {
+      const memberIds = team.memberIds || [];
+      for (const memberId of memberIds) {
+        const member = userMap.get(memberId);
+        const baseName =
+          member?.preferredName ||
+          member?.profile?.preferredName ||
+          member?.fullName ||
+          member?.profile?.fullName ||
+          member?.email?.split('@')?.[0] ||
+          'Solo';
+        const soloCompanyName = `${baseName} Co.`;
+
+        const soloTeamRef = await addDoc(collection(db, 'teams'), {
+          companyName: soloCompanyName,
+          teamName: soloCompanyName,
+          memberIds: [memberId],
+          memberEmails: member?.email ? [member.email] : [],
+          status: 'active',
+          createdBy: user?.uid || null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+
+        await initializeTeamStages(soloTeamRef.id);
+
+        await assignMemberToTeam({
+          memberId,
+          nextTeamId: soloTeamRef.id,
+          nextCompanyName: soloCompanyName,
+          nextTeamName: soloCompanyName
+        });
+      }
+
+      const teamProfileRef = doc(db, 'teamProfiles', team.id);
+      const teamProfileSnap = await getDoc(teamProfileRef);
+      if (teamProfileSnap.exists()) {
+        await deleteDoc(teamProfileRef);
+      }
+
+      await updateDoc(doc(db, 'teams', team.id), {
+        memberIds: [],
+        memberEmails: [],
+        status: 'archived',
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      setError(err.message || 'Could not dissolve team.');
+    } finally {
+      setDissolvingTeamId('');
+    }
+  };
+
   const pendingRequests = teamRequests.filter((request) => request.status === 'pending');
+  const activeTeams = useMemo(
+    () => teams.filter((team) => (team.status || 'active') !== 'archived'),
+    [teams]
+  );
   const userMap = useMemo(() => new Map(users.map((item) => [item.id, item])), [users]);
 
   const teamStageMap = useMemo(() => {
@@ -248,7 +395,7 @@ export default function Teams() {
 
   const teamContributionMap = useMemo(() => {
     const map = new Map();
-    teams.forEach((team) => {
+    activeTeams.forEach((team) => {
       const memberIds = team.memberIds || [];
       const memberStats = new Map();
       memberIds.forEach((memberId) => {
@@ -262,9 +409,7 @@ export default function Teams() {
       });
 
       submissions.forEach((submission) => {
-        const inTeam =
-          submission.teamId === team.id ||
-          (submission.userId && memberIds.includes(submission.userId));
+        const inTeam = submission.teamId === team.id;
         if (!inTeam) return;
         const contributorId = submission.userId || submission.submittedBy;
         if (!contributorId || !memberStats.has(contributorId)) return;
@@ -281,8 +426,6 @@ export default function Teams() {
       });
 
       pointsLedger.forEach((entry) => {
-        if (entry.reason !== 'manual-bonus') return;
-
         if (entry.entityType === 'user' && memberStats.has(entry.entityId)) {
           const stats = memberStats.get(entry.entityId);
           stats.points += entry.amount || 0;
@@ -292,12 +435,12 @@ export default function Teams() {
       map.set(team.id, memberStats);
     });
     return map;
-  }, [teams, submissions, pointsLedger]);
+  }, [activeTeams, submissions, pointsLedger]);
 
-  const teamBonusMap = useMemo(() => {
+  const teamPointsMap = useMemo(() => {
     const map = new Map();
     pointsLedger.forEach((entry) => {
-      if (entry.reason !== 'manual-bonus' || entry.entityType !== 'team' || !entry.entityId) return;
+      if (entry.entityType !== 'team' || !entry.entityId) return;
       map.set(entry.entityId, (map.get(entry.entityId) || 0) + (entry.amount || 0));
     });
     return map;
@@ -339,55 +482,60 @@ export default function Teams() {
 
   const handleBrandKitDecision = async (submission, team, nextStatus) => {
     if (!submission || !team) return;
+    setError('');
     const feedbackNote = brandFeedbackById[submission.id] || '';
-    await updateDoc(doc(db, 'submissions', submission.id), {
-      status: nextStatus,
-      feedback: {
-        note: feedbackNote,
-        type: nextStatus,
-        by: user?.uid || null,
-        createdAt: serverTimestamp()
-      },
-      reviewedBy: user?.uid || null,
-      reviewedAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-
-    if (nextStatus === 'approved') {
-      await setDoc(
-        doc(db, 'teamProfiles', submission.teamId),
-        {
-          teamId: submission.teamId,
-          companyName: submission.content?.companyName || '',
-          logoUrl: submission.content?.logoUrl || '',
-          logoDataUrl: submission.content?.logoDataUrl || '',
-          mission: submission.content?.mission || '',
-          approvedAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
+    try {
+      await updateDoc(doc(db, 'submissions', submission.id), {
+        status: nextStatus,
+        feedback: {
+          note: feedbackNote,
+          type: nextStatus,
+          by: user?.uid || null,
+          createdAt: serverTimestamp()
         },
-        { merge: true }
-      );
-    }
+        reviewedBy: user?.uid || null,
+        reviewedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
 
-    const recipients = team.memberIds || [];
-    if (nextStatus === 'approved') {
-      await sendNotifications({
-        userIds: recipients,
-        title: 'Approved: Brand kit',
-        message: 'Your brand kit is approved and published.',
-        link: '/student/company',
-        type: 'task-approved',
-        sourceId: submission.id
-      });
-    } else if (nextStatus === 'needs_changes') {
-      await sendNotifications({
-        userIds: recipients,
-        title: 'Needs changes: Brand kit',
-        message: `Update your brand kit and resubmit. ${feedbackNote ? `Feedback: ${feedbackNote}` : ''}`.trim(),
-        link: '/student/company',
-        type: 'task-needs-changes',
-        sourceId: submission.id
-      });
+      if (nextStatus === 'approved') {
+        await setDoc(
+          doc(db, 'teamProfiles', submission.teamId),
+          {
+            teamId: submission.teamId,
+            companyName: submission.content?.companyName || '',
+            logoUrl: submission.content?.logoUrl || '',
+            logoDataUrl: submission.content?.logoDataUrl || '',
+            mission: submission.content?.mission || '',
+            approvedAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          },
+          { merge: true }
+        );
+      }
+
+      const recipients = team.memberIds || [];
+      if (nextStatus === 'approved') {
+        await sendNotifications({
+          userIds: recipients,
+          title: 'Approved: Brand kit',
+          message: 'Your brand kit is approved and published.',
+          link: '/student/company',
+          type: 'task-approved',
+          sourceId: submission.id
+        });
+      } else if (nextStatus === 'needs_changes') {
+        await sendNotifications({
+          userIds: recipients,
+          title: 'Needs changes: Brand kit',
+          message: `Update your brand kit and resubmit. ${feedbackNote ? `Feedback: ${feedbackNote}` : ''}`.trim(),
+          link: '/student/company',
+          type: 'task-needs-changes',
+          sourceId: submission.id
+        });
+      }
+    } catch (err) {
+      setError(err.message || 'Could not review brand kit.');
     }
   };
 
@@ -478,15 +626,21 @@ export default function Teams() {
 
         <Stack spacing={2}>
           <Typography variant="h6">Active teams</Typography>
-          {teams.length === 0 ? (
+          {activeTeams.length === 0 ? (
             <Paper sx={{ p: 3 }}>
               <Typography color="text.secondary">No teams created yet.</Typography>
             </Paper>
           ) : null}
-          {teams.map((team) => {
+          {activeTeams.map((team) => {
             const memberIds = team.memberIds || [];
             const memberStats = teamContributionMap.get(team.id) || new Map();
-            const teamBonus = teamBonusMap.get(team.id) || 0;
+            const teamPoints = teamPointsMap.get(team.id) || 0;
+            const teamTotalPoints =
+              teamPoints +
+              memberIds.reduce(
+                (sum, memberId) => sum + Number(memberStats.get(memberId)?.points || 0),
+                0
+              );
             const stageList = teamStageMap.get(team.id) || [];
             const completedStages = stageList.filter((stage) => stage.status === 'complete').length;
             const totalStages = stageList.length || stages.length || 0;
@@ -533,15 +687,20 @@ export default function Teams() {
                       label={`${completedStages}/${totalStages || 0} stages complete`}
                       variant="outlined"
                     />
+                    <Chip
+                      label={`Team total: ${teamTotalPoints.toLocaleString()} BB`}
+                      color="secondary"
+                      variant="outlined"
+                    />
                     {activeStage ? (
                       <Chip
                         label={`Active: ${stageTitleMap.get(activeStage.stageId) || 'Stage'}`}
                         color="secondary"
                       />
                     ) : null}
-                    {teamBonus > 0 ? (
+                    {teamPoints > 0 ? (
                       <Chip
-                        label={`Team bonus: ${teamBonus} BB`}
+                        label={`Team-awarded: ${teamPoints.toLocaleString()} BB`}
                         color="secondary"
                         variant="outlined"
                       />
@@ -634,6 +793,17 @@ export default function Teams() {
                     <Typography variant="caption" color="text.secondary">
                       Student must have already logged in once so their account exists.
                     </Typography>
+                    {role === 'super_admin' ? (
+                      <Button
+                        variant="outlined"
+                        color="error"
+                        onClick={() => handleDissolveTeam(team)}
+                        disabled={dissolvingTeamId === team.id}
+                        sx={{ alignSelf: 'flex-start' }}
+                      >
+                        {dissolvingTeamId === team.id ? 'Dissolving…' : 'Dissolve team'}
+                      </Button>
+                    ) : null}
                   </Stack>
 
                   {brandKitSubmission ? (

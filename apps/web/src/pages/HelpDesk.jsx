@@ -53,6 +53,7 @@ export default function HelpDesk() {
         stage: stage.trim(),
         task: task.trim(),
         status: 'open',
+        awaitingRole: 'teacher',
         messages: [
           {
             body: message.trim(),
@@ -71,22 +72,51 @@ export default function HelpDesk() {
     }
   };
 
-  const sendReply = async (ticketId) => {
+  const sendReply = async (ticket) => {
     setError('');
-    const reply = replyById[ticketId];
+    const reply = replyById[ticket.id];
     if (!reply || !reply.trim()) return;
     try {
-      await updateDoc(doc(db, 'helpTickets', ticketId), {
+      await updateDoc(doc(db, 'helpTickets', ticket.id), {
+>>>>>>> codex/bonus-bear-bucks
         messages: arrayUnion({
           body: reply.trim(),
           senderId: user.uid,
           createdAt: Timestamp.now()
         }),
+        awaitingRole: role === 'student' ? 'teacher' : 'student',
         updatedAt: serverTimestamp()
       });
-      setReplyById((prev) => ({ ...prev, [ticketId]: '' }));
+
+      if (role !== 'student' && ticket.createdBy) {
+        await addDoc(collection(db, 'notifications'), {
+          userId: ticket.createdBy,
+          title: 'Help desk reply',
+          message: 'A teacher replied to your help desk ticket.',
+          link: '/student/help',
+          type: 'helpdesk-reply',
+          sourceId: ticket.id,
+          read: false,
+          createdAt: serverTimestamp()
+        });
+      }
+
+      setReplyById((prev) => ({ ...prev, [ticket.id]: '' }));
     } catch (err) {
       setError(err.message || 'Could not send reply.');
+    }
+  };
+
+  const resolveTicket = async (ticketId) => {
+    setError('');
+    try {
+      await updateDoc(doc(db, 'helpTickets', ticketId), {
+        status: 'resolved',
+        awaitingRole: 'resolved',
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      setError(err.message || 'Could not resolve ticket.');
     }
   };
 
@@ -155,13 +185,24 @@ export default function HelpDesk() {
                   multiline
                   minRows={2}
                 />
-                <Button
-                  variant="outlined"
-                  color="secondary"
-                  onClick={() => sendReply(ticket.id)}
-                >
-                  Send reply
-                </Button>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
+                  <Button
+                    variant="outlined"
+                    color="secondary"
+                    onClick={() => sendReply(ticket)}
+                  >
+                    Send reply
+                  </Button>
+                  {role !== 'student' && ticket.status !== 'resolved' ? (
+                    <Button
+                      variant="outlined"
+                      color="success"
+                      onClick={() => resolveTicket(ticket.id)}
+                    >
+                      Mark resolved
+                    </Button>
+                  ) : null}
+                </Stack>
               </Stack>
             </Paper>
           ))}

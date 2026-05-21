@@ -2,6 +2,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { CircularProgress, Stack, Typography } from '@mui/material';
 import AppShell from './AppShell.jsx';
 import { useAuth } from '../lib/auth-context.jsx';
+import { PATHS } from '../lib/paths.js';
 
 export default function RequireAuth() {
   const location = useLocation();
@@ -19,15 +20,15 @@ export default function RequireAuth() {
   }
 
   if (!user) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return <Navigate to={PATHS.login} state={{ from: location }} replace />;
   }
 
   if (!profile || !profile.onboarded) {
-    return <Navigate to="/onboarding" replace />;
+    return <Navigate to={PATHS.onboarding} replace />;
   }
 
   if (status === 'pending') {
-    return <Navigate to="/pending" replace />;
+    return <Navigate to={PATHS.pending} replace />;
   }
 
   return <Outlet />;

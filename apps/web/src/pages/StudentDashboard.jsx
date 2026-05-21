@@ -167,8 +167,15 @@ export default function StudentDashboard() {
 
   const userSubmissionsQuery = useMemo(() => {
     if (!user) return null;
+    if (profile?.teamId) {
+      return query(
+        collection(db, 'submissions'),
+        where('userId', '==', user.uid),
+        where('teamId', '==', profile.teamId)
+      );
+    }
     return query(collection(db, 'submissions'), where('userId', '==', user.uid));
-  }, [user?.uid]);
+  }, [user?.uid, profile?.teamId]);
   const { data: userSubmissions } = useCollection(userSubmissionsQuery);
 
   const [companyName, setCompanyName] = useState('');

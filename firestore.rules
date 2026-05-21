@@ -104,12 +104,11 @@ service cloud.firestore {
 
     function canTeacherAssignUserTeam() {
       return isTeacher() &&
-        userCoreFieldsUnchanged() &&
-        request.resource.data.email == resource.data.email &&
         changedKeys().hasOnly([
           'teamId',
           'companyName',
           'teamName',
+          'teamHistory',
           'updatedAt'
         ]);
     }
@@ -223,6 +222,7 @@ service cloud.firestore {
         request.resource.data.createdAt == resource.data.createdAt &&
         changedKeys().hasOnly([
           'messages',
+          'awaitingRole',
           'updatedAt'
         ]);
     }

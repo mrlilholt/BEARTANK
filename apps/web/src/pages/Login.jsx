@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppShell from '../components/AppShell.jsx';
 import { DASHBOARD_BY_ROLE, useAuth } from '../lib/auth-context.jsx';
+import { PATHS } from '../lib/paths.js';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -13,21 +14,21 @@ export default function Login() {
   useEffect(() => {
     if (!user) return;
     if (!profile?.onboarded) {
-      navigate('/onboarding');
+      navigate(PATHS.onboarding);
       return;
     }
     if (status === 'pending') {
-      navigate('/pending');
+      navigate(PATHS.pending);
       return;
     }
-    navigate(DASHBOARD_BY_ROLE[role] || '/student');
+    navigate(DASHBOARD_BY_ROLE[role] || PATHS.student.root);
   }, [user, profile, role, status, navigate]);
 
   const handleSignIn = async () => {
     setIsSigningIn(true);
     try {
       await signIn();
-      navigate('/onboarding');
+      navigate(PATHS.onboarding);
     } finally {
       setIsSigningIn(false);
     }

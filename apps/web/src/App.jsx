@@ -22,164 +22,69 @@ import SideHustles from './pages/SideHustles.jsx';
 import PitchDeck from './pages/PitchDeck.jsx';
 import Resources from './pages/Resources.jsx';
 import NotFound from './pages/NotFound.jsx';
+import Unauthorized from './pages/Unauthorized.jsx';
+import { PATHS } from './lib/paths.js';
+
+const STUDENT_ROUTES = [
+  { path: PATHS.student.root, element: <StudentDashboard /> },
+  { path: PATHS.student.company, element: <CompanyProfile /> },
+  { path: PATHS.student.stage, element: <StageDetail /> },
+  { path: PATHS.student.task, element: <TaskDetail /> },
+  { path: PATHS.student.help, element: <HelpDesk /> },
+  { path: PATHS.student.announcements, element: <Announcements /> },
+  { path: PATHS.student.notifications, element: <Notifications /> },
+  { path: PATHS.student.pitchDeck, element: <PitchDeck /> },
+  { path: PATHS.student.resources, element: <Resources /> }
+];
+
+const TEACHER_ROUTES = [
+  { path: PATHS.teacher.root, element: <TeacherDashboard /> },
+  { path: PATHS.teacher.stages, element: <TeacherStages /> },
+  { path: PATHS.teacher.approvals, element: <Approvals /> },
+  { path: PATHS.teacher.teams, element: <Teams /> },
+  { path: PATHS.teacher.analytics, element: <Analytics /> },
+  { path: PATHS.teacher.announcements, element: <Announcements /> },
+  { path: PATHS.teacher.sideHustles, element: <SideHustles /> },
+  { path: PATHS.teacher.resources, element: <Resources /> },
+  { path: PATHS.teacher.helpdesk, element: <HelpDesk /> }
+];
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/onboarding" element={<Onboarding />} />
-      <Route path="/pending" element={<PendingAccess />} />
+      <Route path={PATHS.home} element={<Landing />} />
+      <Route path={PATHS.login} element={<Login />} />
+      <Route path={PATHS.onboarding} element={<Onboarding />} />
+      <Route path={PATHS.pending} element={<PendingAccess />} />
+      <Route path={PATHS.unauthorized} element={<Unauthorized />} />
 
       <Route element={<RequireAuth />}>
-        <Route
-          path="/student"
-          element={
-            <RequireRole allow={['student']}>
-              <StudentDashboard />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/student/company"
-          element={
-            <RequireRole allow={['student']}>
-              <CompanyProfile />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/student/stage/:stageId"
-          element={
-            <RequireRole allow={['student']}>
-              <StageDetail />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/student/task/:taskId"
-          element={
-            <RequireRole allow={['student']}>
-              <TaskDetail />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/student/help"
-          element={
-            <RequireRole allow={['student']}>
-              <HelpDesk />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/student/announcements"
-          element={
-            <RequireRole allow={['student']}>
-              <Announcements />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/student/notifications"
-          element={
-            <RequireRole allow={['student']}>
-              <Notifications />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/student/pitch-deck"
-          element={
-            <RequireRole allow={['student']}>
-              <PitchDeck />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/student/resources"
-          element={
-            <RequireRole allow={['student']}>
-              <Resources />
-            </RequireRole>
-          }
-        />
+        {STUDENT_ROUTES.map((route) => (
+          <Route
+            key={route.path}
+            path={route.path}
+            element={
+              <RequireRole allow={['student']}>
+                {route.element}
+              </RequireRole>
+            }
+          />
+        ))}
+
+        {TEACHER_ROUTES.map((route) => (
+          <Route
+            key={route.path}
+            path={route.path}
+            element={
+              <RequireRole allow={['teacher', 'super_admin']}>
+                {route.element}
+              </RequireRole>
+            }
+          />
+        ))}
 
         <Route
-          path="/teacher"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <TeacherDashboard />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/teacher/stages"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <TeacherStages />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/teacher/approvals"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <Approvals />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/teacher/teams"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <Teams />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/teacher/analytics"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <Analytics />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/teacher/announcements"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <Announcements />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/teacher/side-hustles"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <SideHustles />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/teacher/resources"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <Resources />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/teacher/helpdesk"
-          element={
-            <RequireRole allow={['teacher', 'super_admin']}>
-              <HelpDesk />
-            </RequireRole>
-          }
-        />
-
-        <Route
-          path="/admin"
+          path={PATHS.admin}
           element={
             <RequireRole allow={['super_admin']}>
               <AdminDashboard />

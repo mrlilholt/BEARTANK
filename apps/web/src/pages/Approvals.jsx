@@ -51,6 +51,7 @@ export default function Approvals() {
   const [feedbackById, setFeedbackById] = useState({});
   const [bonusById, setBonusById] = useState({});
   const [actionError, setActionError] = useState('');
+  const [actionNotice, setActionNotice] = useState('');
   const [filterStage, setFilterStage] = useState('all');
   const [filterTeam, setFilterTeam] = useState('all');
   const [search, setSearch] = useState('');
@@ -103,6 +104,26 @@ export default function Approvals() {
     );
   };
 
+  const initializeTeamStages = async (teamId) => {
+    await Promise.all(
+      stages.map(async (stage, index) => {
+        const docId = `${teamId}_${stage.id}`;
+        const stageRef = doc(db, 'teamStages', docId);
+        const existing = await getDoc(stageRef);
+        if (existing.exists()) return;
+        await setDoc(stageRef, {
+          teamId,
+          stageId: stage.id,
+          order: Number(stage.order || index + 1),
+          status: index === 0 ? 'active' : 'locked',
+          progress: 0,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      })
+    );
+  };
+
   const updateTeamStageProgress = async (submission) => {
     if (stages.length === 0) return;
     const stageId = submission.stageId;
@@ -147,11 +168,11 @@ export default function Approvals() {
             collection(db, 'submissions'),
             where('taskId', '==', task.id),
             where('status', '==', 'approved'),
+            where('teamId', '==', teamId),
             where('userId', 'in', memberIds)
           )
         );
-        const approvedIds = new Set(individualSnapshot.docs.map((docSnap) => docSnap.data().userId));
-        if (memberIds.every((id) => approvedIds.has(id))) completed += 1;
+        if (!individualSnapshot.empty) completed += 1;
       }
     }
 
@@ -226,6 +247,7 @@ export default function Approvals() {
 
   const handleUpdate = async (submission, nextStatus) => {
     setActionError('');
+    setActionNotice('');
     if (!user) return;
     const feedbackNote = feedbackById[submission.id] || '';
     const bonus = Number(bonusById[submission.id] || 0);
@@ -234,6 +256,7 @@ export default function Approvals() {
 
     try {
       let resolvedTeamId = submission.teamId || null;
+      let userData = null;
 
       if (
         nextStatus === 'approved' &&
@@ -242,48 +265,72 @@ export default function Approvals() {
         submission.userId
       ) {
         const userSnap = await getDoc(doc(db, 'users', submission.userId));
-        const userData = userSnap.exists() ? userSnap.data() : {};
+        userData = userSnap.exists() ? userSnap.data() : {};
+        if (userData.teamId) {
+          resolvedTeamId = userData.teamId;
+        }
+      }
+
+      if (
+        nextStatus === 'approved' &&
+        submission.taskType === 'brand_kit' &&
+        !resolvedTeamId &&
+        submission.userId
+      ) {
         const companyName =
           submission.content?.companyName ||
           userData.companyName ||
           userData.profile?.preferredName ||
           'Solo Team';
-        const teamRef = await addDoc(collection(db, 'teams'), {
-          companyName,
-          teamName: companyName,
-          memberIds: [submission.userId],
-          memberEmails: userData.email ? [userData.email] : [],
-          status: 'active',
-          createdBy: user.uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-        resolvedTeamId = teamRef.id;
+        let teamRef;
 
-        await Promise.all(
-          stages.map(async (stage, index) => {
-            const docId = `${teamRef.id}_${stage.id}`;
-            const stageRef = doc(db, 'teamStages', docId);
-            const existing = await getDoc(stageRef);
-            if (existing.exists()) return;
-            await setDoc(stageRef, {
-              teamId: teamRef.id,
-              stageId: stage.id,
-              order: Number(stage.order || index + 1),
-              status: index === 0 ? 'active' : 'locked',
-              progress: 0,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            });
-          })
-        );
+        try {
+          teamRef = await addDoc(collection(db, 'teams'), {
+            companyName,
+            teamName: companyName,
+            memberIds: [submission.userId],
+            memberEmails: userData.email ? [userData.email] : [],
+            status: 'active',
+            createdBy: user.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          resolvedTeamId = teamRef.id;
+        } catch (err) {
+          console.error('Approval step failed: create team doc', err);
+          throw new Error(
+            err.code === 'permission-denied'
+              ? 'Permission error while creating the fallback team document.'
+              : err.message || 'Could not create the fallback team document.'
+          );
+        }
 
-        await updateDoc(doc(db, 'users', submission.userId), {
-          teamId: teamRef.id,
-          companyName,
-          teamName: companyName,
-          updatedAt: serverTimestamp()
-        });
+        try {
+          await initializeTeamStages(teamRef.id);
+        } catch (err) {
+          console.error('Approval step failed: initialize team stages', err);
+          throw new Error(
+            err.code === 'permission-denied'
+              ? 'Permission error while initializing team stages.'
+              : err.message || 'Could not initialize team stages.'
+          );
+        }
+
+        try {
+          await updateDoc(doc(db, 'users', submission.userId), {
+            teamId: teamRef.id,
+            companyName,
+            teamName: companyName,
+            updatedAt: serverTimestamp()
+          });
+        } catch (err) {
+          console.error('Approval step failed: attach team to user', err);
+          throw new Error(
+            err.code === 'permission-denied'
+              ? 'Permission error while attaching the new team to the student user.'
+              : err.message || 'Could not attach the new team to the student user.'
+          );
+        }
       }
 
       const updatePayload = {
@@ -296,7 +343,6 @@ export default function Approvals() {
         },
         bonusPoints: bonus,
         pointsAwarded,
-        pointsIssued: nextStatus === 'approved' ? true : submission.pointsIssued || false,
         reviewedBy: user.uid,
         reviewedAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -306,40 +352,100 @@ export default function Approvals() {
         updatePayload.teamId = resolvedTeamId;
       }
 
-      await updateDoc(doc(db, 'submissions', submission.id), updatePayload);
+      try {
+        await updateDoc(doc(db, 'submissions', submission.id), updatePayload);
+      } catch (err) {
+        console.error('Approval step failed: update submission', err);
+        throw new Error(
+          err.code === 'permission-denied'
+            ? 'Permission error while updating the submission record.'
+            : err.message || 'Could not update the submission.'
+        );
+      }
+
+      const pointsEntityType =
+        (taskMap.get(submission.taskId)?.type || '').toLowerCase() === 'individual' && submission.userId
+          ? 'user'
+          : resolvedTeamId || submission.teamId
+          ? 'team'
+          : submission.userId
+          ? 'user'
+          : null;
+      const pointsEntityId =
+        pointsEntityType === 'user' ? submission.userId : resolvedTeamId || submission.teamId || null;
+
+      if (
+        nextStatus === 'approved' &&
+        pointsAwarded > 0 &&
+        !submission.pointsIssued &&
+        pointsEntityType &&
+        pointsEntityId
+      ) {
+        try {
+          await addDoc(collection(db, 'pointsLedger'), {
+            entityType: pointsEntityType,
+            entityId: pointsEntityId,
+            amount: pointsAwarded,
+            reason: 'task-approval',
+            taskId: submission.taskId || null,
+            stageId: submission.stageId || null,
+            submissionId: submission.id,
+            awardedBy: user.uid,
+            message: submission.taskTitle || taskMap.get(submission.taskId)?.title || 'Task approval',
+            createdAt: serverTimestamp()
+          });
+
+          await updateDoc(doc(db, 'submissions', submission.id), {
+            pointsIssued: true,
+            updatedAt: serverTimestamp()
+          });
+        } catch (err) {
+          console.error('Approval step failed: issue Bear Bucks ledger entry', err);
+          setActionNotice(
+            err.code === 'permission-denied'
+              ? 'Approval saved, but Firestore blocked the Bear Bucks ledger write.'
+              : 'Approval saved, but the Bear Bucks ledger write failed.'
+          );
+        }
+      }
 
       if (
         nextStatus === 'approved' &&
         submission.taskType === 'brand_kit' &&
         (resolvedTeamId || submission.teamId)
       ) {
-        await setDoc(
-          doc(db, 'teamProfiles', resolvedTeamId || submission.teamId),
-          {
-            teamId: resolvedTeamId || submission.teamId,
-            companyName: submission.content?.companyName || '',
-            logoUrl: submission.content?.logoUrl || '',
-            logoDataUrl: submission.content?.logoDataUrl || '',
-            mission: submission.content?.mission || '',
-            approvedAt: serverTimestamp(),
-            updatedAt: serverTimestamp()
-          },
-          { merge: true }
+        try {
+          await setDoc(
+            doc(db, 'teamProfiles', resolvedTeamId || submission.teamId),
+            {
+              teamId: resolvedTeamId || submission.teamId,
+              companyName: submission.content?.companyName || '',
+              logoUrl: submission.content?.logoUrl || '',
+              logoDataUrl: submission.content?.logoDataUrl || '',
+              mission: submission.content?.mission || '',
+              approvedAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            },
+            { merge: true }
+          );
+        } catch (err) {
+          console.error('Brand kit approval: teamProfiles write failed', err);
+          setActionNotice('Approval saved, but the company profile publish step failed.');
+        }
+      }
+
+      try {
+        await updateTeamStageProgress({
+          ...submission,
+          status: nextStatus,
+          teamId: resolvedTeamId || submission.teamId || null
+        });
+      } catch (err) {
+        console.error('Approval saved, but stage progress update failed', err);
+        setActionNotice((current) =>
+          current || 'Approval saved, but stage progress did not update automatically.'
         );
       }
-
-      if (nextStatus === 'approved' && !submission.pointsIssued && pointsAwarded > 0) {
-        await addDoc(collection(db, 'pointsLedger'), {
-          entityType: submission.teamId ? 'team' : 'user',
-          entityId: submission.teamId || submission.userId,
-          amount: pointsAwarded,
-          reason: 'task-approved',
-          sourceId: submission.id,
-          createdAt: serverTimestamp()
-        });
-      }
-
-      await updateTeamStageProgress({ ...submission, status: nextStatus });
 
       const recipients = [];
       const notifyTeamId = resolvedTeamId || submission.teamId;
@@ -361,30 +467,45 @@ export default function Approvals() {
           ? `/student/task/${submission.taskId}`
           : null;
         if (nextStatus === 'approved') {
-          await sendNotifications({
-            userIds: recipients,
-            title: `Approved: ${baseTitle}`,
-            message: isBrandKit
-              ? 'Your brand kit is approved and published.'
-              : `You earned ${pointsAwarded} Bear Bucks. ${feedbackNote ? `Feedback: ${feedbackNote}` : ''}`.trim(),
-            link,
-            type: 'task-approved',
-            sourceId: submission.id
-          });
+          try {
+            await sendNotifications({
+              userIds: recipients,
+              title: `Approved: ${baseTitle}`,
+              message: isBrandKit
+                ? 'Your brand kit is approved and published.'
+                : `You earned ${pointsAwarded} Bear Bucks. ${feedbackNote ? `Feedback: ${feedbackNote}` : ''}`.trim(),
+              link,
+              type: 'task-approved',
+              sourceId: submission.id
+            });
+          } catch (err) {
+            console.error('Approval saved, but notifications failed', err);
+            setActionNotice((current) =>
+              current || 'Approval saved, but notifications could not be sent.'
+            );
+          }
         } else if (nextStatus === 'needs_changes') {
-          await sendNotifications({
-            userIds: recipients,
-            title: `Needs changes: ${baseTitle}`,
-            message: isBrandKit
-              ? `Update your brand kit and resubmit. ${feedbackNote ? `Feedback: ${feedbackNote}` : ''}`.trim()
-              : `Review feedback and resubmit. ${feedbackNote ? `Feedback: ${feedbackNote}` : ''}`.trim(),
-            link,
-            type: 'task-needs-changes',
-            sourceId: submission.id
-          });
+          try {
+            await sendNotifications({
+              userIds: recipients,
+              title: `Needs changes: ${baseTitle}`,
+              message: isBrandKit
+                ? `Update your brand kit and resubmit. ${feedbackNote ? `Feedback: ${feedbackNote}` : ''}`.trim()
+                : `Review feedback and resubmit. ${feedbackNote ? `Feedback: ${feedbackNote}` : ''}`.trim(),
+              link,
+              type: 'task-needs-changes',
+              sourceId: submission.id
+            });
+          } catch (err) {
+            console.error('Needs-changes update saved, but notifications failed', err);
+            setActionNotice((current) =>
+              current || 'Update saved, but notifications could not be sent.'
+            );
+          }
         }
       }
     } catch (err) {
+      console.error('Approval flow failed', err);
       setActionError(err.message || 'Could not update submission.');
     }
   };
@@ -398,6 +519,7 @@ export default function Approvals() {
       <Stack spacing={2}>
         {error ? <Alert severity="error">{error.message}</Alert> : null}
         {actionError ? <Alert severity="error">{actionError}</Alert> : null}
+        {actionNotice ? <Alert severity="warning">{actionNotice}</Alert> : null}
         <Paper sx={{ p: 2 }}>
           <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
             <TextField

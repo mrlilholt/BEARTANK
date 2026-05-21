@@ -10,15 +10,18 @@ export function useDocument(docRef) {
     if (!docRef) {
       setData(null);
       setLoading(false);
+      setError(null);
       return undefined;
     }
 
     setLoading(true);
+    setError(null);
     const unsubscribe = onSnapshot(
       docRef,
       (snapshot) => {
         setData(snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null);
         setLoading(false);
+        setError(null);
       },
       (err) => {
         setError(err);
@@ -41,15 +44,18 @@ export function useCollection(queryRef) {
     if (!queryRef) {
       setData([]);
       setLoading(false);
+      setError(null);
       return undefined;
     }
 
     setLoading(true);
+    setError(null);
     const unsubscribe = onSnapshot(
       queryRef,
       (snapshot) => {
         setData(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
         setLoading(false);
+        setError(null);
       },
       (err) => {
         setError(err);

@@ -18,14 +18,13 @@ import {
   updateDoc
 } from 'firebase/firestore';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { superAdminEmails } from './env.js';
 import { auth, db } from './firebase.js';
+import { PATHS } from './paths.js';
 
 const AuthContext = createContext(null);
 
-const SUPER_ADMIN_EMAILS = (import.meta.env.VITE_SUPER_ADMIN_EMAILS || '')
-  .split(',')
-  .map((entry) => entry.trim().toLowerCase())
-  .filter(Boolean);
+const SUPER_ADMIN_EMAILS = superAdminEmails;
 
 export const ROLE_LABELS = {
   student: 'Student',
@@ -34,9 +33,9 @@ export const ROLE_LABELS = {
 };
 
 export const DASHBOARD_BY_ROLE = {
-  student: '/student',
-  teacher: '/teacher',
-  super_admin: '/teacher'
+  student: PATHS.student.root,
+  teacher: PATHS.teacher.root,
+  super_admin: PATHS.admin
 };
 
 function isSuperAdminEmail(email) {
@@ -88,8 +87,7 @@ export function AuthProvider({ children }) {
               onboarded: true,
               email: nextUser.email || '',
               photoURL: nextUser.photoURL || '',
-              updatedAt: serverTimestamp(),
-              createdAt: serverTimestamp()
+              updatedAt: serverTimestamp()
             },
             { merge: true }
           );
