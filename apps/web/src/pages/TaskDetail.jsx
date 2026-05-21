@@ -43,12 +43,14 @@ export default function TaskDetail() {
     return query(
       collection(db, 'submissions'),
       where('taskId', '==', taskId),
-      where('userId', '==', user.uid)
+      where('userId', '==', user.uid),
+      where('teamId', '==', profile?.teamId || null)
     );
   }, [taskId, task?.type, user?.uid, profile?.teamId]);
 
   const { data: submissions } = useCollection(submissionQuery);
   const submission = submissions[0];
+  const submissionStatus = submission?.status || null;
 
   const [link, setLink] = useState('');
   const [reflection, setReflection] = useState('');
@@ -65,6 +67,9 @@ export default function TaskDetail() {
 
   const isTeamTask = task?.type === 'team';
   const missingTeam = isTeamTask && !profile?.teamId;
+  const canEditSubmission =
+    !submission || submissionStatus === 'draft' || submissionStatus === 'needs_changes';
+  const submitLabel = submissionStatus === 'needs_changes' ? 'Resubmit for approval' : 'Submit for approval';
 
   const handleSubmit = async () => {
     setError('');
@@ -85,37 +90,42 @@ export default function TaskDetail() {
       return;
     }
 
-    const payload = {
-      taskId,
-      taskTitle: task.title || '',
-      taskPoints: task.points || 0,
-      taskType: task.type || 'individual',
-      stageId: task.stageId || null,
-      teamId: profile?.teamId || null,
-      userId: isTeamTask ? null : user.uid,
-      submittedBy: user.uid,
-      status: 'submitted',
-      content: {
-        link: link.trim(),
-        reflection: reflection.trim(),
-        timelineNote: timelineNote.trim()
-      },
-      updatedAt: serverTimestamp(),
-      createdAt: submission?.createdAt || serverTimestamp()
+    const contentPayload = {
+      link: link.trim(),
+      reflection: reflection.trim(),
+      timelineNote: timelineNote.trim()
     };
 
     setSaving(true);
     try {
       if (submission?.id) {
-        await updateDoc(doc(db, 'submissions', submission.id), payload);
+        await updateDoc(doc(db, 'submissions', submission.id), {
+          status: 'submitted',
+          content: contentPayload,
+          updatedAt: serverTimestamp()
+        });
       } else {
         await addDoc(collection(db, 'submissions'), {
-          ...payload,
+          taskId,
+          taskTitle: task.title || '',
+          taskPoints: task.points || 0,
+          taskType: task.type || 'individual',
+          stageId: task.stageId || null,
+          teamId: profile?.teamId || null,
+          userId: isTeamTask ? null : user.uid,
+          submittedBy: user.uid,
+          status: 'submitted',
+          content: contentPayload,
+          updatedAt: serverTimestamp(),
           createdAt: serverTimestamp()
         });
       }
     } catch (err) {
-      setError(err.message || 'Could not submit.');
+      if (err?.code === 'permission-denied') {
+        setError('This submission can no longer be edited. Refresh to view the latest status.');
+      } else {
+        setError(err.message || 'Could not submit.');
+      }
     } finally {
       setSaving(false);
     }
@@ -140,6 +150,12 @@ export default function TaskDetail() {
               {submission.feedback?.note ? ` — ${submission.feedback.note}` : ''}
             </Alert>
           ) : null}
+          {submission && !canEditSubmission ? (
+            <Alert severity="info">
+              This submission is locked while it is {submissionStatus}. You can edit again only when it
+              returns to needs changes.
+            </Alert>
+          ) : null}
           {error ? <Alert severity="error">{error}</Alert> : null}
           {missingTeam ? (
             <Alert severity="warning">
@@ -151,6 +167,7 @@ export default function TaskDetail() {
             placeholder="https://docs.google.com/..."
             value={link}
             onChange={(event) => setLink(event.target.value)}
+            disabled={!canEditSubmission || saving}
           />
           <TextField
             label="Reflection"
@@ -159,6 +176,7 @@ export default function TaskDetail() {
             placeholder="What did your team decide?"
             value={reflection}
             onChange={(event) => setReflection(event.target.value)}
+            disabled={!canEditSubmission || saving}
           />
           <TextField
             label="Timeline update (required)"
@@ -167,11 +185,18 @@ export default function TaskDetail() {
             placeholder="Summarize the work you completed so it appears on your company timeline."
             value={timelineNote}
             onChange={(event) => setTimelineNote(event.target.value)}
+            disabled={!canEditSubmission || saving}
           />
           <Divider />
-          <Button variant="contained" color="secondary" onClick={handleSubmit} disabled={saving}>
-            {saving ? 'Submitting...' : 'Submit for approval'}
-          </Button>
+          {canEditSubmission ? (
+            <Button variant="contained" color="secondary" onClick={handleSubmit} disabled={saving}>
+              {saving ? 'Submitting...' : submitLabel}
+            </Button>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No action needed right now. Your submission is currently read-only.
+            </Typography>
+          )}
         </Stack>
       </Paper>
     </AppShell>

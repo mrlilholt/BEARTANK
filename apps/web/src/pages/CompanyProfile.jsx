@@ -205,7 +205,11 @@ export default function CompanyProfile() {
     };
 
     if (latestBrandKit && brandStatus === 'needs_changes') {
-      await updateDoc(doc(db, 'submissions', latestBrandKit.id), payload);
+      await updateDoc(doc(db, 'submissions', latestBrandKit.id), {
+        status: 'submitted',
+        content: payload.content,
+        updatedAt: serverTimestamp()
+      });
     } else {
       await addDoc(collection(db, 'submissions'), {
         ...payload,
@@ -263,8 +267,7 @@ export default function CompanyProfile() {
       if (task.type === 'team') {
         if (taskSubs.length > 0) completed += 1;
       } else {
-        const approvedIds = new Set(taskSubs.map((sub) => sub.userId).filter(Boolean));
-        if (memberIdSet.size > 0 && Array.from(memberIdSet).every((id) => approvedIds.has(id))) {
+        if (taskSubs.some((sub) => memberIdSet.has(sub.userId))) {
           completed += 1;
         }
       }

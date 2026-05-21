@@ -147,11 +147,11 @@ export default function Approvals() {
             collection(db, 'submissions'),
             where('taskId', '==', task.id),
             where('status', '==', 'approved'),
+            where('teamId', '==', teamId),
             where('userId', 'in', memberIds)
           )
         );
-        const approvedIds = new Set(individualSnapshot.docs.map((docSnap) => docSnap.data().userId));
-        if (memberIds.every((id) => approvedIds.has(id))) completed += 1;
+        if (!individualSnapshot.empty) completed += 1;
       }
     }
 
@@ -296,7 +296,6 @@ export default function Approvals() {
         },
         bonusPoints: bonus,
         pointsAwarded,
-        pointsIssued: nextStatus === 'approved' ? true : submission.pointsIssued || false,
         reviewedBy: user.uid,
         reviewedAt: serverTimestamp(),
         updatedAt: serverTimestamp()
@@ -326,17 +325,6 @@ export default function Approvals() {
           },
           { merge: true }
         );
-      }
-
-      if (nextStatus === 'approved' && !submission.pointsIssued && pointsAwarded > 0) {
-        await addDoc(collection(db, 'pointsLedger'), {
-          entityType: submission.teamId ? 'team' : 'user',
-          entityId: submission.teamId || submission.userId,
-          amount: pointsAwarded,
-          reason: 'task-approved',
-          sourceId: submission.id,
-          createdAt: serverTimestamp()
-        });
       }
 
       await updateTeamStageProgress({ ...submission, status: nextStatus });
