@@ -18,13 +18,14 @@ import {
   query
 } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import AppShell from '../components/AppShell.jsx';
 import { useAuth } from '../lib/auth-context.jsx';
 import { useCollection, useDocument } from '../lib/firestore-hooks.js';
 import { db } from '../lib/firebase.js';
 
 export default function TaskDetail() {
+  const navigate = useNavigate();
   const { taskId } = useParams();
   const { user, profile } = useAuth();
   const taskRef = useMemo(() => (taskId ? doc(db, 'tasks', taskId) : null), [taskId]);
@@ -57,7 +58,6 @@ export default function TaskDetail() {
   const [timelineNote, setTimelineNote] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-
   useEffect(() => {
     if (!submission) return;
     setLink(submission.content?.link || '');
@@ -66,6 +66,7 @@ export default function TaskDetail() {
   }, [submission]);
 
   const isTeamTask = task?.type === 'team';
+  const isSideHustle = task?.category === 'side_hustle';
   const missingTeam = isTeamTask && !profile?.teamId;
   const canEditSubmission =
     !submission || submissionStatus === 'draft' || submissionStatus === 'needs_changes';
@@ -120,6 +121,15 @@ export default function TaskDetail() {
           createdAt: serverTimestamp()
         });
       }
+      navigate('/student', {
+        replace: true,
+        state: isSideHustle
+          ? {
+              sideHustleCelebration: true,
+              sideHustleTaskTitle: task.title || ''
+            }
+          : null
+      });
     } catch (err) {
       if (err?.code === 'permission-denied') {
         setError('This submission can no longer be edited. Refresh to view the latest status.');

@@ -282,6 +282,13 @@ export default function Approvals() {
           userData.companyName ||
           userData.profile?.preferredName ||
           'Solo Team';
+        const memberName =
+          userData.preferredName ||
+          userData.profile?.preferredName ||
+          userData.fullName?.split(' ')?.[0] ||
+          userData.profile?.fullName?.split(' ')?.[0] ||
+          userData.email?.split('@')?.[0]?.split(/[._-]/)?.[0] ||
+          'Solo';
         let teamRef;
 
         try {
@@ -290,6 +297,7 @@ export default function Approvals() {
             teamName: companyName,
             memberIds: [submission.userId],
             memberEmails: userData.email ? [userData.email] : [],
+            memberNames: [memberName],
             status: 'active',
             createdBy: user.uid,
             createdAt: serverTimestamp(),
