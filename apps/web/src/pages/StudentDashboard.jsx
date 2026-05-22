@@ -7,6 +7,10 @@ import {
   AccordionSummary,
   Button,
   ButtonBase,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Grid,
   Chip,
   Paper,
@@ -29,7 +33,7 @@ import {
   where
 } from 'firebase/firestore';
 import { useEffect, useMemo, useState } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import AppShell from '../components/AppShell.jsx';
 import StageCard from '../components/StageCard.jsx';
 import { useAuth } from '../lib/auth-context.jsx';
@@ -93,13 +97,69 @@ function ProgressRing({ value = 0 }) {
   );
 }
 
+function CelebrationConfetti() {
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 28 }, (_, index) => ({
+        id: index,
+        left: `${(index * 13) % 100}%`,
+        delay: `${(index % 7) * 0.12}s`,
+        duration: `${2.6 + (index % 5) * 0.18}s`,
+        color: ['#6c63ff', '#ff6f61', '#34d399', '#fbbf24'][index % 4],
+        rotate: `${(index % 2 === 0 ? 1 : -1) * (10 + index * 7)}deg`
+      })),
+    []
+  );
+
+  return (
+    <Box
+      sx={{
+        position: 'fixed',
+        inset: 0,
+        pointerEvents: 'none',
+        overflow: 'hidden',
+        zIndex: 1600
+      }}
+    >
+      {pieces.map((piece) => (
+        <Box
+          key={piece.id}
+          sx={{
+            position: 'absolute',
+            top: -24,
+            left: piece.left,
+            width: 12,
+            height: 20,
+            borderRadius: piece.id % 3 === 0 ? '50%' : 1,
+            bgcolor: piece.color,
+            opacity: 0.92,
+            transform: `rotate(${piece.rotate})`,
+            animation: `confetti-fall ${piece.duration} ease-in ${piece.delay} forwards`,
+            '@keyframes confetti-fall': {
+              '0%': { transform: `translate3d(0,0,0) rotate(${piece.rotate})`, opacity: 1 },
+              '100%': {
+                transform: `translate3d(${piece.id % 2 === 0 ? '-120px' : '120px'}, 110vh, 0) rotate(${Number.parseInt(piece.rotate, 10) * 4}deg)`,
+                opacity: 0
+              }
+            }
+          }}
+        />
+      ))}
+    </Box>
+  );
+}
+
 export default function StudentDashboard() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { user, profile } = useAuth();
   const stagesQuery = useMemo(
     () => query(collection(db, 'stages'), orderBy('order', 'asc')),
     []
   );
   const { data: stages } = useCollection(stagesQuery);
+  const tasksQuery = useMemo(() => query(collection(db, 'tasks'), orderBy('order', 'asc')), []);
+  const { data: allTasks } = useCollection(tasksQuery);
   const teamStagesQuery = useMemo(() => {
     if (!profile?.teamId) return null;
     return query(
@@ -123,16 +183,6 @@ export default function StudentDashboard() {
       setSelectedStageId(activeStage.id);
     }
   }, [activeStage?.id, selectedStageId]);
-
-  const tasksQuery = useMemo(() => {
-    if (!selectedStage) return null;
-    return query(
-      collection(db, 'tasks'),
-      where('stageId', '==', selectedStage.id),
-      orderBy('order', 'asc')
-    );
-  }, [selectedStage?.id]);
-  const { data: tasks } = useCollection(tasksQuery);
 
   const teamRef = useMemo(() => {
     if (!profile?.teamId) return null;
@@ -183,6 +233,9 @@ export default function StudentDashboard() {
   const [memberEmails, setMemberEmails] = useState('');
   const [requestError, setRequestError] = useState('');
   const [animatedValue, setAnimatedValue] = useState(0);
+  const [celebration, setCelebration] = useState(null);
+  const [celebrationAmount, setCelebrationAmount] = useState(0);
+  const [sideHustlePopup, setSideHustlePopup] = useState(null);
 
   const userPointsQuery = useMemo(() => {
     if (!user) return null;
@@ -228,7 +281,27 @@ export default function StudentDashboard() {
     };
   }, [totalPoints]);
 
-  const submissions = [...(teamSubmissions || []), ...(userSubmissions || [])];
+  const submissions = useMemo(() => {
+    const deduped = new Map();
+    [...(teamSubmissions || []), ...(userSubmissions || [])].forEach((submission) => {
+      if (!submission?.id) return;
+      const existing = deduped.get(submission.id);
+      const submissionTime =
+        submission.reviewedAt?.toMillis?.() ||
+        submission.updatedAt?.toMillis?.() ||
+        submission.createdAt?.toMillis?.() ||
+        0;
+      const existingTime =
+        existing?.reviewedAt?.toMillis?.() ||
+        existing?.updatedAt?.toMillis?.() ||
+        existing?.createdAt?.toMillis?.() ||
+        0;
+      if (!existing || submissionTime >= existingTime) {
+        deduped.set(submission.id, submission);
+      }
+    });
+    return [...deduped.values()];
+  }, [teamSubmissions, userSubmissions]);
   const pendingCount = submissions.filter((item) => item.status === 'submitted').length;
   const approvedCount = submissions.filter((item) => item.status === 'approved').length;
   const needsChangesCount = submissions.filter((item) => item.status === 'needs_changes').length;
@@ -246,7 +319,14 @@ export default function StudentDashboard() {
     return acc;
   }, new Map());
 
-  const tasksToShow = tasks.length ? tasks : sampleTasks;
+  const stageTasks = useMemo(
+    () =>
+      allTasks
+        .filter((task) => task.stageId === selectedStage?.id && task.category !== 'side_hustle')
+        .sort((a, b) => Number(a.order || 0) - Number(b.order || 0)),
+    [allTasks, selectedStage?.id]
+  );
+  const tasksToShow = stageTasks.length ? stageTasks : sampleTasks;
   const hasTeamStages = teamStages.length > 0;
   const stageCards = stages.length
     ? stages.map((stage) => {
@@ -283,6 +363,18 @@ export default function StudentDashboard() {
 
   const displayCompanyName =
     teamProfile?.companyName || team?.companyName || 'Solo Team';
+  const teamMemberNames = useMemo(
+    () =>
+      (team?.memberNames?.length
+        ? team.memberNames
+        : (team?.memberEmails || []).map((email) => {
+            const rawName = email?.split('@')?.[0] || 'student';
+            const firstSegment = rawName.split(/[._-]/)[0] || rawName;
+            return firstSegment.charAt(0).toUpperCase() + firstSegment.slice(1);
+          }))
+        .sort((a, b) => a.localeCompare(b)),
+    [team?.memberEmails, team?.memberNames]
+  );
 
   const handleTeamRequest = async () => {
     setRequestError('');
@@ -334,6 +426,10 @@ export default function StudentDashboard() {
     ...stage,
     icon: categoryIcons[index % categoryIcons.length]
   }));
+  const stageOrderMap = useMemo(
+    () => new Map(stageCards.map((stage, index) => [stage.id, index])),
+    [stageCards]
+  );
   const scheduleItems = tasksToShow.slice(0, 3).map((task, index) => {
     const submission = submissionsByTask.get(task.id);
     return {
@@ -345,6 +441,138 @@ export default function StudentDashboard() {
       time: '9:00 AM'
     };
   });
+
+  const getOrderedStageTasks = (stageId) =>
+    allTasks
+      .filter((task) => task.stageId === stageId && task.category !== 'side_hustle')
+      .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+
+  const getStageMissionTarget = (stageId) => {
+    const candidateTasks = getOrderedStageTasks(stageId);
+    if (candidateTasks.length === 0) return null;
+    const nextTask = candidateTasks.find((task) => {
+      const status = submissionsByTask.get(task.id)?.status;
+      return status !== 'approved';
+    });
+    if (nextTask) return nextTask;
+
+    const currentOrder = stageOrderMap.get(stageId) ?? -1;
+    const nextUnlockedStage = stageCards.find(
+      (stage) => (stageOrderMap.get(stage.id) ?? -1) > currentOrder && stage.status !== 'locked'
+    );
+    if (nextUnlockedStage) {
+      const nextStageTasks = getOrderedStageTasks(nextUnlockedStage.id);
+      if (nextStageTasks.length > 0) return nextStageTasks[0];
+    }
+
+    return candidateTasks[0];
+  };
+
+  const approvedSubmissions = useMemo(
+    () =>
+      submissions
+        .filter((submission) => submission.status === 'approved')
+        .sort((a, b) => {
+          const aTime = a.reviewedAt?.toMillis?.() || a.updatedAt?.toMillis?.() || 0;
+          const bTime = b.reviewedAt?.toMillis?.() || b.updatedAt?.toMillis?.() || 0;
+          return bTime - aTime;
+        }),
+    [submissions]
+  );
+
+  useEffect(() => {
+    if (!user || celebration) return;
+
+    const pendingMissionCelebrations = approvedSubmissions
+      .filter((submission) => {
+        const key = `beartank:mission-celebration:${submission.id}`;
+        return typeof window !== 'undefined' && !window.localStorage.getItem(key);
+      })
+      .map((submission) => ({
+        type: 'mission',
+        key: `beartank:mission-celebration:${submission.id}`,
+        title: 'Mission complete',
+        body: `${submission.taskTitle || 'Your mission'} was approved.`,
+        amount: submission.pointsAwarded ?? submission.taskPoints ?? 0
+      }));
+
+    if (pendingMissionCelebrations.length > 0) {
+      setCelebration(pendingMissionCelebrations[0]);
+      return;
+    }
+
+    const pendingPhaseCelebrations = teamStages
+      .filter((stage) => stage.status === 'complete')
+      .sort((a, b) => Number(b.order || 0) - Number(a.order || 0))
+      .map((stage) => {
+        const stageMeta = stages.find((item) => item.id === stage.stageId);
+        const stageEarned = approvedSubmissions
+          .filter((submission) => submission.stageId === stage.stageId)
+          .reduce(
+            (sum, submission) =>
+              sum + Number(submission.pointsAwarded ?? submission.taskPoints ?? 0),
+            0
+          );
+
+        return {
+          type: 'phase',
+          key: `beartank:phase-celebration:${profile?.teamId}:${stage.stageId}`,
+          title: `${stageMeta?.title || 'Phase'} complete`,
+          body: 'During this phase you earned a total of',
+          amount: stageEarned
+        };
+      })
+      .filter(
+        (item) => typeof window !== 'undefined' && !window.localStorage.getItem(item.key)
+      );
+
+    if (pendingPhaseCelebrations.length > 0) {
+      setCelebration(pendingPhaseCelebrations[0]);
+    }
+  }, [approvedSubmissions, celebration, profile?.teamId, stages, teamStages, user]);
+
+  useEffect(() => {
+    if (!location.state?.sideHustleCelebration || sideHustlePopup) return;
+    setSideHustlePopup({
+      title: 'Way to keep HUSTLING!',
+      taskTitle: location.state.sideHustleTaskTitle || ''
+    });
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate, sideHustlePopup]);
+
+  useEffect(() => {
+    if (!celebration) {
+      setCelebrationAmount(0);
+      return;
+    }
+    let frameId;
+    let startTime = null;
+    const finalAmount = Number(celebration.amount || 0);
+    const duration = celebration.type === 'phase' ? 1800 : 1200;
+
+    const animate = (timestamp) => {
+      if (!startTime) startTime = timestamp;
+      const progress = Math.min((timestamp - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setCelebrationAmount(Math.floor(eased * finalAmount));
+      if (progress < 1) {
+        frameId = requestAnimationFrame(animate);
+      }
+    };
+
+    setCelebrationAmount(0);
+    frameId = requestAnimationFrame(animate);
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [celebration]);
+
+  const closeCelebration = () => {
+    if (celebration?.key && typeof window !== 'undefined') {
+      window.localStorage.setItem(celebration.key, '1');
+    }
+    setCelebration(null);
+  };
 
   const weeklyCounts = useMemo(() => {
     const counts = new Array(7).fill(0);
@@ -365,6 +593,74 @@ export default function StudentDashboard() {
     const max = Math.max(...weeklyCounts, 1);
     return weeklyCounts.map((value) => Math.round((value / max) * 100));
   }, [weeklyCounts]);
+
+  const missionControlPanel = (
+    <Paper sx={{ p: 3, mb: 3 }}>
+      <Stack spacing={2}>
+        <Typography variant="h5">Mission control</Typography>
+        {tasksToShow.length === 0 ? (
+          <Typography color="text.secondary">No missions available yet.</Typography>
+        ) : (
+          <Stack spacing={1}>
+            {tasksToShow.map((task) => {
+              const submission = submissionsByTask.get(task.id);
+              const status = submission?.status || 'pending';
+              return (
+                <Accordion
+                  key={task.id}
+                  disableGutters
+                  sx={{
+                    borderRadius: 6,
+                    '&:before': { display: 'none' },
+                    boxShadow: '0 10px 24px rgba(31, 37, 82, 0.08)'
+                  }}
+                >
+                  <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      justifyContent="space-between"
+                      sx={{ width: '100%', gap: 2 }}
+                    >
+                      <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                        {task.title}
+                      </Typography>
+                      <Chip
+                        size="small"
+                        label={status.replace('_', ' ')}
+                        color={status === 'approved' ? 'success' : status === 'submitted' ? 'info' : 'default'}
+                      />
+                    </Stack>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Stack spacing={1}>
+                      <Typography color="text.secondary">
+                        {task.description || 'Add your work details and submit for approval.'}
+                      </Typography>
+                      <Stack direction="row" spacing={2} alignItems="center">
+                        <Typography variant="caption" color="text.secondary">
+                          {task.points || 0} BB • {task.type || 'team'} task
+                        </Typography>
+                      </Stack>
+                      <Button
+                        component={RouterLink}
+                        to={`/student/task/${task.id}`}
+                        variant="outlined"
+                        color="secondary"
+                        sx={{ alignSelf: 'flex-start' }}
+                      >
+                        Open mission
+                      </Button>
+                    </Stack>
+                  </AccordionDetails>
+                </Accordion>
+              );
+            })}
+          </Stack>
+        )}
+      </Stack>
+    </Paper>
+  );
 
   return (
     <AppShell
@@ -504,19 +800,42 @@ export default function StudentDashboard() {
               <Grid container spacing={2}>
                 {categoryTiles.map((stage) => {
                   const Icon = stage.icon;
-                  const isActive = stage.id === selectedStageId;
+                  const isSelected = stage.id === selectedStageId;
+                  const isActive = stage.status === 'active';
+                  const isLocked = stage.status === 'locked';
+                  const isComplete = stage.status === 'complete';
+                  const isInteractive = !isLocked && !isComplete;
                   return (
                     <Grid item xs={6} sm={3} key={stage.id}>
                       <ButtonBase
-                        onClick={() => setSelectedStageId(stage.id)}
+                        onClick={() => {
+                          setSelectedStageId(stage.id);
+                          if (!isInteractive) return;
+                          const mission = getStageMissionTarget(stage.id);
+                          if (mission?.id) navigate(`/student/task/${mission.id}`);
+                        }}
+                        disabled={!isInteractive}
                         sx={{
                           width: '100%',
                           height: 140,
                           borderRadius: 6,
                           p: 2,
                           textAlign: 'center',
-                          bgcolor: isActive ? 'rgba(108, 99, 255, 0.12)' : '#ffffff',
-                          border: isActive ? '1px solid rgba(108, 99, 255, 0.4)' : '1px solid #f1f2f6'
+                          bgcolor: isComplete
+                            ? 'rgba(34, 197, 94, 0.12)'
+                            : isActive
+                            ? 'rgba(108, 99, 255, 0.12)'
+                            : '#ffffff',
+                          border: isComplete
+                            ? '1px solid rgba(34, 197, 94, 0.45)'
+                            : isActive
+                            ? '1px solid rgba(108, 99, 255, 0.4)'
+                            : '1px solid #f1f2f6',
+                          opacity: isLocked ? 0.5 : 1,
+                          cursor: isInteractive ? 'pointer' : 'default',
+                          boxShadow: isSelected
+                            ? '0 14px 28px rgba(108, 99, 255, 0.12)'
+                            : 'none'
                         }}
                       >
                         <Stack spacing={1} alignItems="center">
@@ -527,8 +846,12 @@ export default function StudentDashboard() {
                               borderRadius: 6,
                               display: 'grid',
                               placeItems: 'center',
-                              bgcolor: isActive ? 'rgba(108, 99, 255, 0.2)' : 'rgba(108, 99, 255, 0.08)',
-                              color: 'secondary.main'
+                              bgcolor: isComplete
+                                ? 'rgba(34, 197, 94, 0.2)'
+                                : isActive
+                                ? 'rgba(108, 99, 255, 0.2)'
+                                : 'rgba(108, 99, 255, 0.08)',
+                              color: isComplete ? 'success.main' : 'secondary.main'
                             }}
                           >
                             <Icon fontSize="small" />
@@ -537,7 +860,7 @@ export default function StudentDashboard() {
                             {stage.title}
                           </Typography>
                           <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
-                            {stage.progress}% complete
+                            {isLocked ? 'locked' : isComplete ? 'complete' : `${stage.progress}% complete`}
                           </Typography>
                         </Stack>
                       </ButtonBase>
@@ -587,10 +910,30 @@ export default function StudentDashboard() {
               )}
             </Stack>
           </Paper>
+
+          <Paper sx={{ p: 3, mt: 3 }}>
+            <Stack spacing={2}>
+              <Typography variant="h5">Phase checklist</Typography>
+              <Grid container spacing={2}>
+                {stageCards.map((stage) => (
+                  <Grid item xs={12} md={6} key={stage.id}>
+                    <StageCard
+                      title={stage.title}
+                      status={stage.status}
+                      progress={stage.progress}
+                      points={stage.points}
+                      tasks={stage.tasks}
+                    />
+                  </Grid>
+                ))}
+              </Grid>
+            </Stack>
+          </Paper>
         </Grid>
 
         <Grid item xs={12} md={5}>
           <Stack spacing={3}>
+            {missionControlPanel}
             <Paper sx={{ p: 3 }}>
               <Stack direction="row" spacing={2} alignItems="center" justifyContent="space-between">
                 <Stack spacing={0.5}>
@@ -810,104 +1153,25 @@ export default function StudentDashboard() {
       </Grid>
 
       <Grid container spacing={3} sx={{ mt: 1 }}>
-        <Grid item xs={12} md={7}>
-          <Stack spacing={3}>
-            <Paper sx={{ p: 3 }}>
-              <Stack spacing={2}>
-                <Typography variant="h5">Phase checklist</Typography>
-                <Grid container spacing={2}>
-                  {stageCards.map((stage) => (
-                    <Grid item xs={12} md={6} key={stage.id}>
-                      <StageCard
-                        title={stage.title}
-                        status={stage.status}
-                        progress={stage.progress}
-                        points={stage.points}
-                        tasks={stage.tasks}
-                      />
-                    </Grid>
-                  ))}
-                </Grid>
-              </Stack>
-            </Paper>
-
-            <Paper sx={{ p: 3 }}>
-              <Stack spacing={2}>
-                <Typography variant="h5">Mission control</Typography>
-                {tasksToShow.length === 0 ? (
-                  <Typography color="text.secondary">No missions available yet.</Typography>
-                ) : (
-                  <Stack spacing={1}>
-                    {tasksToShow.map((task) => {
-                      const submission = submissionsByTask.get(task.id);
-                      const status = submission?.status || 'pending';
-                      return (
-                        <Accordion
-                          key={task.id}
-                          disableGutters
-                          sx={{
-                            borderRadius: 6,
-                            '&:before': { display: 'none' },
-                            boxShadow: '0 10px 24px rgba(31, 37, 82, 0.08)'
-                          }}
-                        >
-                          <AccordionSummary expandIcon={<ExpandMoreRoundedIcon />}>
-                            <Stack
-                              direction="row"
-                              alignItems="center"
-                              justifyContent="space-between"
-                              sx={{ width: '100%', gap: 2 }}
-                            >
-                              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                                {task.title}
-                              </Typography>
-                              <Chip
-                                size="small"
-                                label={status.replace('_', ' ')}
-                                color={status === 'approved' ? 'success' : status === 'submitted' ? 'info' : 'default'}
-                              />
-                            </Stack>
-                          </AccordionSummary>
-                          <AccordionDetails>
-                            <Stack spacing={1}>
-                              <Typography color="text.secondary">
-                                {task.description || 'Add your work details and submit for approval.'}
-                              </Typography>
-                              <Stack direction="row" spacing={2} alignItems="center">
-                                <Typography variant="caption" color="text.secondary">
-                                  {task.points || 0} BB • {task.type || 'team'} task
-                                </Typography>
-                              </Stack>
-                              <Button
-                                component={RouterLink}
-                                to={`/student/task/${task.id}`}
-                                variant="outlined"
-                                color="secondary"
-                                sx={{ alignSelf: 'flex-start' }}
-                              >
-                                Open mission
-                              </Button>
-                            </Stack>
-                          </AccordionDetails>
-                        </Accordion>
-                      );
-                    })}
-                  </Stack>
-                )}
-              </Stack>
-            </Paper>
-          </Stack>
-        </Grid>
-
         <Grid item xs={12} md={5}>
           <Stack spacing={3}>
             <Paper sx={{ p: 3 }}>
               <Stack spacing={2}>
                 <Typography variant="h5">Team & company</Typography>
                 {team ? (
-                  <Alert severity="success">
-                    {displayCompanyName} • {(team.memberIds || []).length} members
-                  </Alert>
+                  <Stack spacing={1.5}>
+                    <Alert severity="success">
+                      {displayCompanyName} • {(team.memberIds || []).length} members
+                    </Alert>
+                    {teamMemberNames.length > 0 ? (
+                      <Stack spacing={0.75}>
+                        <Typography variant="subtitle2">Team members</Typography>
+                        <Typography color="text.secondary">
+                          {teamMemberNames.join(', ')}
+                        </Typography>
+                      </Stack>
+                    ) : null}
+                  </Stack>
                 ) : pendingRequest ? (
                   <Alert severity="info">Your team request is pending approval.</Alert>
                 ) : (
@@ -941,6 +1205,54 @@ export default function StudentDashboard() {
           </Stack>
         </Grid>
       </Grid>
+      {celebration ? <CelebrationConfetti /> : null}
+      <Dialog open={Boolean(celebration)} onClose={closeCelebration} maxWidth="xs" fullWidth>
+        <DialogTitle>{celebration?.title || 'Celebration'}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={1.5} sx={{ pt: 1 }}>
+            <Typography color="text.secondary">{celebration?.body}</Typography>
+            {celebration?.type === 'phase' ? (
+              <Typography
+                variant="h3"
+                sx={{ fontWeight: 800, color: 'secondary.main', fontVariantNumeric: 'tabular-nums' }}
+              >
+                {celebrationAmount.toLocaleString()} BB
+              </Typography>
+            ) : (
+              <Chip
+                color="secondary"
+                label={`${celebrationAmount.toLocaleString()} BB earned`}
+                sx={{ alignSelf: 'flex-start' }}
+              />
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeCelebration} variant="contained" color="secondary">
+            Keep building
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={Boolean(sideHustlePopup)}
+        onClose={() => setSideHustlePopup(null)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>{sideHustlePopup?.title || 'Way to keep HUSTLING!'}</DialogTitle>
+        <DialogContent>
+          <Typography color="text.secondary" sx={{ pt: 1 }}>
+            {sideHustlePopup?.taskTitle
+              ? `${sideHustlePopup.taskTitle} is in and ready for review.`
+              : 'Your side hustle is in and ready for review.'}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSideHustlePopup(null)} variant="contained" color="secondary">
+            Keep going
+          </Button>
+        </DialogActions>
+      </Dialog>
     </AppShell>
   );
 }

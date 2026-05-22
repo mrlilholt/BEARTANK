@@ -81,6 +81,7 @@ export default function Teams() {
   const [addMemberByTeam, setAddMemberByTeam] = useState({});
   const [addMemberErrorByTeam, setAddMemberErrorByTeam] = useState({});
   const [dissolvingTeamId, setDissolvingTeamId] = useState('');
+  const [removingMemberId, setRemovingMemberId] = useState('');
   const [teamView, setTeamView] = useState('active');
 
   const parseEmails = (value) =>
@@ -88,6 +89,14 @@ export default function Teams() {
       .split(/[,\\n]/)
       .map((entry) => entry.trim())
       .filter(Boolean);
+
+  const resolveMemberFirstName = (member) =>
+    member?.preferredName ||
+    member?.profile?.preferredName ||
+    member?.fullName?.split(' ')?.[0] ||
+    member?.profile?.fullName?.split(' ')?.[0] ||
+    member?.email?.split('@')?.[0]?.split(/[._-]/)?.[0] ||
+    'Student';
 
   const resolveMemberIds = async (emails = []) => {
     if (!emails.length) return [];
@@ -146,11 +155,16 @@ export default function Teams() {
       return;
     }
 
+    const memberNames = Array.from(memberIds)
+      .map((memberId) => resolveMemberFirstName(userMap.get(memberId)))
+      .filter(Boolean);
+
     const teamRef = await addDoc(collection(db, 'teams'), {
       companyName: nextCompanyName,
       teamName: nextTeamName || nextCompanyName,
       memberIds: Array.from(memberIds),
       memberEmails: emails,
+      memberNames,
       status: 'active',
       createdBy: user?.uid || null,
       createdAt: serverTimestamp(),
@@ -206,6 +220,7 @@ export default function Teams() {
     const previousCompanyName = memberData.companyName || '';
     const previousTeamName = memberData.teamName || '';
     const memberEmail = memberData.email || '';
+    const memberName = resolveMemberFirstName(memberData);
 
     if (previousTeamId && previousTeamId !== nextTeamId) {
       const previousTeamRef = doc(db, 'teams', previousTeamId);
@@ -218,7 +233,10 @@ export default function Teams() {
         await updateDoc(previousTeamRef, {
           memberIds: arrayRemove(memberId),
           memberEmails: memberEmail ? arrayRemove(memberEmail) : previousTeam.memberEmails || [],
-          status: isSoloTeam ? 'archived' : previousTeam.status || 'active',
+          memberNames: memberName ? arrayRemove(memberName) : previousTeam.memberNames || [],
+          status: isSoloTeam ? 'dissolved' : previousTeam.status || 'active',
+          dissolvedAt: isSoloTeam ? serverTimestamp() : previousTeam.dissolvedAt || null,
+          dissolvedBy: isSoloTeam ? user?.uid || null : previousTeam.dissolvedBy || null,
           updatedAt: serverTimestamp()
         });
 
@@ -298,6 +316,7 @@ export default function Teams() {
     await updateDoc(doc(db, 'teams', team.id), {
       memberIds: arrayUnion(userId),
       memberEmails: arrayUnion(email),
+      memberNames: arrayUnion(resolveMemberFirstName(userDoc.data())),
       updatedAt: serverTimestamp()
     });
 
@@ -309,6 +328,47 @@ export default function Teams() {
     });
 
     setAddMemberByTeam((prev) => ({ ...prev, [team.id]: '' }));
+  };
+
+  const handleRemoveMember = async (team, memberId) => {
+    if (!window.confirm('Remove this student from the team? They will be moved to a solo team.')) {
+      return;
+    }
+
+    setError('');
+    setRemovingMemberId(memberId);
+
+    try {
+      const member = userMap.get(memberId);
+      const baseName =
+        resolveMemberFirstName(member) || 'Solo';
+      const soloCompanyName = `${baseName} Co.`;
+
+      const soloTeamRef = await addDoc(collection(db, 'teams'), {
+        companyName: soloCompanyName,
+        teamName: soloCompanyName,
+        memberIds: [memberId],
+        memberEmails: member?.email ? [member.email] : [],
+        memberNames: [baseName],
+        status: 'active',
+        createdBy: user?.uid || null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      await initializeTeamStages(soloTeamRef.id);
+
+      await assignMemberToTeam({
+        memberId,
+        nextTeamId: soloTeamRef.id,
+        nextCompanyName: soloCompanyName,
+        nextTeamName: soloCompanyName
+      });
+    } catch (err) {
+      setError(err.message || 'Could not remove member from team.');
+    } finally {
+      setRemovingMemberId('');
+    }
   };
 
   const handleDissolveTeam = async (team) => {
@@ -325,12 +385,7 @@ export default function Teams() {
       for (const memberId of memberIds) {
         const member = userMap.get(memberId);
         const baseName =
-          member?.preferredName ||
-          member?.profile?.preferredName ||
-          member?.fullName ||
-          member?.profile?.fullName ||
-          member?.email?.split('@')?.[0] ||
-          'Solo';
+          resolveMemberFirstName(member) || 'Solo';
         const soloCompanyName = `${baseName} Co.`;
 
         const soloTeamRef = await addDoc(collection(db, 'teams'), {
@@ -338,6 +393,7 @@ export default function Teams() {
           teamName: soloCompanyName,
           memberIds: [memberId],
           memberEmails: member?.email ? [member.email] : [],
+          memberNames: [baseName],
           status: 'active',
           createdBy: user?.uid || null,
           createdAt: serverTimestamp(),
@@ -363,7 +419,8 @@ export default function Teams() {
       await updateDoc(doc(db, 'teams', team.id), {
         memberIds: [],
         memberEmails: [],
-        status: 'archived',
+        memberNames: [],
+        status: 'dissolved',
         dissolvedAt: serverTimestamp(),
         dissolvedBy: user?.uid || null,
         updatedAt: serverTimestamp()
@@ -377,21 +434,11 @@ export default function Teams() {
 
   const pendingRequests = teamRequests.filter((request) => request.status === 'pending');
   const activeTeams = useMemo(
-    () =>
-      teams.filter((team) => {
-        const memberIds = team.memberIds || [];
-        const status = team.status || 'active';
-        return status !== 'archived' && memberIds.length > 0;
-      }),
+    () => teams.filter((team) => (team.status || 'active') === 'active'),
     [teams]
   );
   const dissolvedTeams = useMemo(
-    () =>
-      teams.filter((team) => {
-        const memberIds = team.memberIds || [];
-        const status = team.status || 'active';
-        return status === 'archived' || memberIds.length === 0;
-      }),
+    () => teams.filter((team) => team.status === 'dissolved'),
     [teams]
   );
   const userMap = useMemo(() => new Map(users.map((item) => [item.id, item])), [users]);
@@ -806,6 +853,15 @@ export default function Teams() {
                                     <Chip size="small" color="warning" label={`${stats.needsChanges} edits`} />
                                   ) : null}
                                   <Chip size="small" label={`${stats.points} BB`} variant="outlined" />
+                                  <Button
+                                    size="small"
+                                    variant="text"
+                                    color="error"
+                                    onClick={() => handleRemoveMember(team, memberId)}
+                                    disabled={removingMemberId === memberId}
+                                  >
+                                    {removingMemberId === memberId ? 'Removing…' : 'Remove'}
+                                  </Button>
                                 </Stack>
                               </Stack>
                             );

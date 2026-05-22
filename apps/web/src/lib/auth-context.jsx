@@ -126,6 +126,12 @@ export function AuthProvider({ children }) {
     await firebaseSignOut(auth);
   };
 
+  const resolveFirstName = ({ preferredName, fullName, email }) =>
+    preferredName ||
+    fullName?.split(' ')?.[0] ||
+    email?.split('@')?.[0]?.split(/[._-]/)?.[0] ||
+    'Solo';
+
   const completeOnboarding = async ({ fullName, preferredName, pronouns, role, classCode }) => {
     if (!auth.currentUser) throw new Error('Missing user');
 
@@ -155,13 +161,18 @@ export function AuthProvider({ children }) {
 
     if (nextRole === 'student' && !profile?.teamId) {
       try {
-        const baseName = preferredName || fullName?.split(' ')?.[0] || 'Solo';
+        const baseName = resolveFirstName({
+          preferredName,
+          fullName,
+          email: auth.currentUser.email || ''
+        });
         const companyName = `${baseName} Co.`;
         const teamRef = await addDoc(collection(db, 'teams'), {
           companyName,
           teamName: companyName,
           memberIds: [auth.currentUser.uid],
           memberEmails: auth.currentUser.email ? [auth.currentUser.email] : [],
+          memberNames: [baseName],
           status: 'active',
           createdBy: auth.currentUser.uid,
           createdAt: serverTimestamp(),
