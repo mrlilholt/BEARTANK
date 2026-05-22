@@ -90,7 +90,6 @@ export default function HelpDesk() {
     if (!reply || !reply.trim()) return;
     try {
       await updateDoc(doc(db, 'helpTickets', ticket.id), {
->>>>>>> codex/bonus-bear-bucks
         messages: arrayUnion({
           body: reply.trim(),
           senderId: user.uid,
