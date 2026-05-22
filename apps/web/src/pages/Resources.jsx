@@ -88,7 +88,8 @@ export default function Resources() {
     description: '',
     url: '',
     type: 'link',
-    category: ''
+    category: '',
+    order: 0
   });
 
   const persistResourceOrder = async (nextResources) => {
@@ -135,13 +136,14 @@ export default function Resources() {
       description: resource.description || '',
       url: resource.url || '',
       type: resource.type || 'link',
-      category: resource.category || ''
+      category: resource.category || '',
+      order: orderedResources.findIndex((item) => item.id === resource.id)
     });
   };
 
   const cancelEdit = () => {
     setEditingId(null);
-    setEditDraft({ title: '', description: '', url: '', type: 'link', category: '' });
+    setEditDraft({ title: '', description: '', url: '', type: 'link', category: '', order: 0 });
   };
 
   const saveEdit = async (resource) => {
@@ -158,6 +160,17 @@ export default function Resources() {
       category: editDraft.category.trim(),
       updatedAt: serverTimestamp()
     });
+    const currentIndex = orderedResources.findIndex((item) => item.id === resource.id);
+    const targetIndex = Math.max(
+      0,
+      Math.min(Number(editDraft.order || 0), Math.max(orderedResources.length - 1, 0))
+    );
+    if (currentIndex !== -1 && currentIndex !== targetIndex) {
+      const nextResources = [...orderedResources];
+      const [movedResource] = nextResources.splice(currentIndex, 1);
+      nextResources.splice(targetIndex, 0, movedResource);
+      await persistResourceOrder(nextResources);
+    }
     cancelEdit();
   };
 
@@ -305,6 +318,28 @@ export default function Resources() {
                         setEditDraft((prev) => ({ ...prev, category: event.target.value }))
                       }
                     />
+                    <TextField
+                      select
+                      label="Display order"
+                      value={editDraft.order}
+                      onChange={(event) =>
+                        setEditDraft((prev) => ({ ...prev, order: Number(event.target.value) }))
+                      }
+                      sx={{ maxWidth: 220 }}
+                    >
+                      {orderedResources.map((item, orderIndex) => (
+                        <MenuItem key={`${resource.id}-order-${item.id}`} value={orderIndex}>
+                          {orderIndex + 1}
+                          {orderIndex === 0
+                            ? 'st'
+                            : orderIndex === 1
+                            ? 'nd'
+                            : orderIndex === 2
+                            ? 'rd'
+                            : 'th'}
+                        </MenuItem>
+                      ))}
+                    </TextField>
                     <Stack direction="row" spacing={2}>
                       <Button
                         variant="contained"
