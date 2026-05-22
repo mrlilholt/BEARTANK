@@ -14,6 +14,8 @@ import {
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
+import ArrowUpwardRoundedIcon from '@mui/icons-material/ArrowUpwardRounded';
+import ArrowDownwardRoundedIcon from '@mui/icons-material/ArrowDownwardRounded';
 import AppShell from '../components/AppShell.jsx';
 import { useAuth } from '../lib/auth-context.jsx';
 import { useCollection } from '../lib/firestore-hooks.js';
@@ -23,10 +25,10 @@ import {
   collection,
   deleteDoc,
   doc,
-  orderBy,
   query,
   serverTimestamp,
-  updateDoc
+  updateDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { useMemo, useState } from 'react';
 
@@ -53,11 +55,26 @@ export default function Resources() {
   const { role, user } = useAuth();
   const canEdit = role === 'teacher' || role === 'super_admin';
 
-  const resourcesQuery = useMemo(
-    () => query(collection(db, 'resources'), orderBy('createdAt', 'desc')),
-    []
-  );
+  const resourcesQuery = useMemo(() => query(collection(db, 'resources')), []);
   const { data: resources } = useCollection(resourcesQuery);
+
+  const orderedResources = useMemo(() => {
+    return [...resources].sort((a, b) => {
+      const aOrder = Number.isFinite(a.order) ? a.order : null;
+      const bOrder = Number.isFinite(b.order) ? b.order : null;
+
+      if (aOrder != null && bOrder != null && aOrder !== bOrder) {
+        return aOrder - bOrder;
+      }
+
+      if (aOrder != null && bOrder == null) return -1;
+      if (aOrder == null && bOrder != null) return 1;
+
+      const aTime = a.createdAt?.toMillis?.() || 0;
+      const bTime = b.createdAt?.toMillis?.() || 0;
+      return bTime - aTime;
+    });
+  }, [resources]);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -74,6 +91,17 @@ export default function Resources() {
     category: ''
   });
 
+  const persistResourceOrder = async (nextResources) => {
+    const batch = writeBatch(db);
+    nextResources.forEach((resource, index) => {
+      batch.update(doc(db, 'resources', resource.id), {
+        order: index,
+        updatedAt: serverTimestamp()
+      });
+    });
+    await batch.commit();
+  };
+
   const handleCreate = async () => {
     setError('');
     if (!title.trim() || !url.trim()) {
@@ -81,16 +109,18 @@ export default function Resources() {
       return;
     }
     const finalUrl = type === 'embed' ? toPreviewUrl(url) : url.trim();
-    await addDoc(collection(db, 'resources'), {
+    const resourceRef = await addDoc(collection(db, 'resources'), {
       title: title.trim(),
       description: description.trim(),
       url: finalUrl,
       type,
       category: category.trim(),
+      order: 0,
       createdBy: user?.uid || null,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
+    await persistResourceOrder([{ id: resourceRef.id }, ...orderedResources]);
     setTitle('');
     setDescription('');
     setUrl('');
@@ -134,6 +164,22 @@ export default function Resources() {
   const deleteResource = async (resourceId) => {
     if (!window.confirm('Delete this resource?')) return;
     await deleteDoc(doc(db, 'resources', resourceId));
+    const remainingResources = orderedResources.filter((resource) => resource.id !== resourceId);
+    if (remainingResources.length > 0) {
+      await persistResourceOrder(remainingResources);
+    }
+  };
+
+  const moveResource = async (resourceId, direction) => {
+    const currentIndex = orderedResources.findIndex((resource) => resource.id === resourceId);
+    if (currentIndex === -1) return;
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= orderedResources.length) return;
+
+    const nextResources = [...orderedResources];
+    const [resource] = nextResources.splice(currentIndex, 1);
+    nextResources.splice(targetIndex, 0, resource);
+    await persistResourceOrder(nextResources);
   };
 
   return (
@@ -199,14 +245,14 @@ export default function Resources() {
           </Paper>
         ) : null}
 
-        {resources.length === 0 ? (
+        {orderedResources.length === 0 ? (
           <Paper sx={{ p: 3 }}>
             <Typography color="text.secondary">No resources shared yet.</Typography>
           </Paper>
         ) : null}
 
         <Stack spacing={2}>
-          {resources.map((resource) => (
+          {orderedResources.map((resource, index) => (
             <Card key={resource.id}>
               <CardContent>
                 {editingId === resource.id ? (
@@ -283,6 +329,18 @@ export default function Resources() {
                       </Stack>
                       {canEdit ? (
                         <Stack direction="row" spacing={1}>
+                          <IconButton
+                            onClick={() => moveResource(resource.id, 'up')}
+                            disabled={index === 0}
+                          >
+                            <ArrowUpwardRoundedIcon />
+                          </IconButton>
+                          <IconButton
+                            onClick={() => moveResource(resource.id, 'down')}
+                            disabled={index === orderedResources.length - 1}
+                          >
+                            <ArrowDownwardRoundedIcon />
+                          </IconButton>
                           <IconButton onClick={() => startEdit(resource)}>
                             <EditIcon />
                           </IconButton>
